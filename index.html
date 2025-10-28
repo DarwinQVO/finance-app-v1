@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Finance App V1 - Documentation</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        .hero {
+            text-align: center;
+            color: white;
+            padding: 60px 0;
+        }
+
+        .hero h1 {
+            font-size: 3.5rem;
+            margin-bottom: 20px;
+            font-weight: 700;
+        }
+
+        .hero p {
+            font-size: 1.3rem;
+            opacity: 0.9;
+            margin-bottom: 10px;
+        }
+
+        .hero .subtitle {
+            font-size: 1rem;
+            opacity: 0.8;
+        }
+
+        .content {
+            background: white;
+            border-radius: 12px;
+            padding: 40px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            margin-top: 40px;
+        }
+
+        .section {
+            margin-bottom: 50px;
+        }
+
+        .section h2 {
+            color: #667eea;
+            font-size: 2rem;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #667eea;
+        }
+
+        .docs-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .doc-card {
+            background: #f8f9fa;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            padding: 20px;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            color: inherit;
+            display: block;
+        }
+
+        .doc-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.2);
+            border-color: #667eea;
+        }
+
+        .doc-card h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 1.2rem;
+        }
+
+        .doc-card p {
+            color: #666;
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
+
+        .doc-card .tag {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 0.75rem;
+            margin-top: 10px;
+        }
+
+        .doc-card.featured {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+        }
+
+        .doc-card.featured h3,
+        .doc-card.featured p {
+            color: white;
+        }
+
+        .doc-card.featured .tag {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+
+        .stat-card {
+            background: #f8f9fa;
+            padding: 25px;
+            border-radius: 8px;
+            text-align: center;
+            border-left: 4px solid #667eea;
+        }
+
+        .stat-card .number {
+            font-size: 2.5rem;
+            font-weight: bold;
+            color: #667eea;
+            display: block;
+        }
+
+        .stat-card .label {
+            color: #666;
+            font-size: 0.9rem;
+            margin-top: 5px;
+        }
+
+        .footer {
+            text-align: center;
+            color: white;
+            padding: 30px 0;
+            margin-top: 40px;
+        }
+
+        .footer a {
+            color: white;
+            text-decoration: underline;
+        }
+
+        @media (max-width: 768px) {
+            .hero h1 {
+                font-size: 2.5rem;
+            }
+
+            .content {
+                padding: 30px 20px;
+            }
+
+            .docs-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="hero">
+            <h1>📊 Finance App V1</h1>
+            <p>Simple pero completa - Una app para manejar todas tus cuentas bancarias</p>
+            <p class="subtitle">~1,800 LOC | 4 bancos | Timeline continuo | Local-first</p>
+        </div>
+
+        <div class="content">
+            <!-- Stats -->
+            <div class="stats">
+                <div class="stat-card">
+                    <span class="number">22</span>
+                    <span class="label">Documentos</span>
+                </div>
+                <div class="stat-card">
+                    <span class="number">~1,800</span>
+                    <span class="label">LOC Total</span>
+                </div>
+                <div class="stat-card">
+                    <span class="number">4</span>
+                    <span class="label">Bancos soportados</span>
+                </div>
+                <div class="stat-card">
+                    <span class="number">~12k</span>
+                    <span class="label">Transacciones</span>
+                </div>
+            </div>
+
+            <!-- Start Here -->
+            <div class="section">
+                <h2>🚀 Empieza aquí</h2>
+                <div class="docs-grid">
+                    <a href="STORYTELLING.md" class="doc-card featured">
+                        <h3>📖 STORYTELLING</h3>
+                        <p>La historia completa de cómo Darwin usa Finance App desde el día 1. Empieza aquí para entender todo.</p>
+                        <span class="tag">⭐ RECOMENDADO</span>
+                    </a>
+                    <a href="flow-1-timeline-continuo.md" class="doc-card featured">
+                        <h3>⏱️ Timeline Continuo</h3>
+                        <p>El concepto más importante: UN flujo para todo. Sin separación setup vs daily use.</p>
+                        <span class="tag">⭐ CONCEPTO CLAVE</span>
+                    </a>
+                    <a href="README.md" class="doc-card">
+                        <h3>📘 README</h3>
+                        <p>Overview del proyecto, tech stack, y estructura.</p>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Foundation -->
+            <div class="section">
+                <h2>🏗️ Foundation</h2>
+                <div class="docs-grid">
+                    <a href="0-scope.md" class="doc-card">
+                        <h3>Scope</h3>
+                        <p>Qué SÍ y qué NO está en V1. Límites claros del proyecto.</p>
+                        <span class="tag">3 min read</span>
+                    </a>
+                    <a href="1-architecture.md" class="doc-card">
+                        <h3>Architecture</h3>
+                        <p>2 tablas, 4-stage pipeline, tech stack completo.</p>
+                        <span class="tag">10 min read</span>
+                    </a>
+                </div>
+            </div>
+
+            <!-- User Flows -->
+            <div class="section">
+                <h2>🎬 User Flows</h2>
+                <div class="docs-grid">
+                    <a href="flow-2-upload-pdf.md" class="doc-card">
+                        <h3>Upload PDF</h3>
+                        <p>Drag & drop de PDFs, procesamiento automático.</p>
+                        <span class="tag">5 min read</span>
+                    </a>
+                    <a href="flow-3-view-transaction.md" class="doc-card">
+                        <h3>View Transaction</h3>
+                        <p>Panel de detalles con toda la info.</p>
+                        <span class="tag">5 min read</span>
+                    </a>
+                    <a href="flow-4-merchant-normalization.md" class="doc-card">
+                        <h3>Merchant Normalization</h3>
+                        <p>Cómo "STARBUCKS #12345" → "Starbucks"</p>
+                        <span class="tag">8 min read</span>
+                    </a>
+                    <a href="flow-5-transfer-linking.md" class="doc-card">
+                        <h3>Transfer Linking</h3>
+                        <p>Detectar transfers entre cuentas automáticamente.</p>
+                        <span class="tag">7 min read</span>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Parsers -->
+            <div class="section">
+                <h2>🏦 Parsers</h2>
+                <div class="docs-grid">
+                    <a href="parser-bofa.md" class="doc-card">
+                        <h3>Bank of America</h3>
+                        <p>Parser para statements de BofA (USD).</p>
+                        <span class="tag">~110 LOC</span>
+                    </a>
+                    <a href="parser-apple-card.md" class="doc-card">
+                        <h3>Apple Card</h3>
+                        <p>Parser para Apple Card statements (USD).</p>
+                        <span class="tag">~105 LOC</span>
+                    </a>
+                    <a href="parser-wise.md" class="doc-card">
+                        <h3>Wise</h3>
+                        <p>Parser multi-currency (USD, EUR, etc).</p>
+                        <span class="tag">~135 LOC</span>
+                    </a>
+                    <a href="parser-scotia.md" class="doc-card">
+                        <h3>Scotiabank</h3>
+                        <p>Parser en español para MXN.</p>
+                        <span class="tag">~145 LOC</span>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Pipeline -->
+            <div class="section">
+                <h2>⚙️ Pipeline (4-Stage Truth Construction)</h2>
+                <div class="docs-grid">
+                    <a href="2-observation-store.md" class="doc-card">
+                        <h3>Stage 1: Observation Store</h3>
+                        <p>Guardar PDF parseado AS-IS, inmutable.</p>
+                        <span class="tag">~110 LOC</span>
+                    </a>
+                    <a href="3-clustering.md" class="doc-card">
+                        <h3>Stage 2: Clustering</h3>
+                        <p>Agrupar merchants similares con string similarity.</p>
+                        <span class="tag">~70 LOC</span>
+                    </a>
+                    <a href="4-normalization.md" class="doc-card">
+                        <h3>Stage 3: Normalization</h3>
+                        <p>Reglas + fallback para merchants limpios.</p>
+                        <span class="tag">~130 LOC</span>
+                    </a>
+                    <a href="5-canonical-store.md" class="doc-card">
+                        <h3>Stage 4: Canonical Store</h3>
+                        <p>La verdad limpia que ve el usuario.</p>
+                        <span class="tag">~150 LOC</span>
+                    </a>
+                </div>
+            </div>
+
+            <!-- UI/UX -->
+            <div class="section">
+                <h2>🎨 UI/UX</h2>
+                <div class="docs-grid">
+                    <a href="6-ui-timeline.md" class="doc-card">
+                        <h3>Timeline</h3>
+                        <p>La vista principal con todas las transacciones.</p>
+                        <span class="tag">~270 LOC</span>
+                    </a>
+                    <a href="7-ui-filters.md" class="doc-card">
+                        <h3>Filters</h3>
+                        <p>Filtrar por cuenta, fecha, tipo, merchant.</p>
+                        <span class="tag">~120 LOC</span>
+                    </a>
+                    <a href="8-ui-details.md" class="doc-card">
+                        <h3>Transaction Details</h3>
+                        <p>Panel lateral con toda la info.</p>
+                        <span class="tag">~220 LOC</span>
+                    </a>
+                </div>
+            </div>
+
+            <!-- Integration -->
+            <div class="section">
+                <h2>🔗 Integration</h2>
+                <div class="docs-grid">
+                    <a href="9-upload-flow.md" class="doc-card">
+                        <h3>Upload Flow</h3>
+                        <p>Flujo completo: PDF → Timeline.</p>
+                        <span class="tag">~260 LOC</span>
+                    </a>
+                    <a href="10-error-handling.md" class="doc-card">
+                        <h3>Error Handling</h3>
+                        <p>Qué pasa cuando algo falla.</p>
+                        <span class="tag">~170 LOC</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p><strong>Finance App V1</strong> • Octubre 2025 • <a href="https://github.com/darwinborges/finance-app-v1" target="_blank">View on GitHub</a></p>
+            <p style="margin-top: 10px; opacity: 0.8;">Documentación completa • Simple pero completo • Local-first</p>
+        </div>
+    </div>
+</body>
+</html>
