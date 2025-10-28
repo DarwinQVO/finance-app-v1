@@ -73,6 +73,7 @@ Finance App es una aplicación completa de finanzas personales que te permite:
 - **[ARCHITECTURE-COMPLETE.md](ARCHITECTURE-COMPLETE.md)** - Arquitectura de 1 tabla + auxiliares
 - **[ROADMAP.md](ROADMAP.md)** - Plan de construcción por fases
 - **[EXTENSIBILITY.md](EXTENSIBILITY.md)** - Cómo extender: nueva cuenta, banco, categoría, etc.
+- **[OPERATIONS.md](OPERATIONS.md)** - Operations: migrations, backups, recovery, performance, testing
 
 ### 📖 Core Documentation (Phase 1)
 1. [0-scope.md](0-scope.md) - Qué está en Phase 1
