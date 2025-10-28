@@ -1,6 +1,6 @@
 # Parser: Bank of America
 
-**Cómo parsear statements de BofA**
+**Cómo parsear statements de BofA con config-driven approach**
 
 ## Overview
 
@@ -9,6 +9,10 @@ Bank of America tiene un formato consistente en sus PDFs. El parser extrae:
 - Description
 - Amount
 - Balance (opcional, no lo usamos)
+
+**🚀 V1 Approach**: Config-driven parser que lee su configuración de la tabla `parser_configs` o archivo YAML.
+
+**No más parsers hardcodeados** - Agregar un nuevo banco solo requiere agregar un config.
 
 ---
 
@@ -44,10 +48,200 @@ Sep 25      TRANSFER TO WISE                      -1,000.00    3,176.42
 
 ---
 
-## Parser code
+## Config-Driven Approach
+
+### Parser Config (YAML)
+
+```yaml
+# configs/parsers/bofa.yaml
+id: bofa
+name: Bank of America
+country: US
+
+detection:
+  keywords:
+    - "Bank of America"
+    - "Member FDIC"
+  patterns:
+    - field: header
+      regex: "Statement Date:.*Account Number:"
+
+parsing:
+  start_marker: "Date        Description"
+  end_marker: "Account Summary"
+  date_format: "MMM DD"
+  decimal_separator: "."
+  thousands_separator: ","
+
+  fields:
+    date:
+      regex: "^([A-Z][a-z]{2}\\s+\\d{1,2})"
+      position: start
+
+    description:
+      regex: "^[A-Z][a-z]{2}\\s+\\d{1,2}\\s+(.+?)\\s+[\\-\\+]?[\\d,]+\\.\\d{2}"
+      cleanup:
+        - remove: "#\\d+"
+
+    amount:
+      regex: "([\\-\\+]?[\\d,]+\\.\\d{2})\\s+[\\d,]+\\.\\d{2}$"
+      position: -2  # Penúltima columna
+
+classification:
+  transfer_keywords:
+    - TRANSFER
+    - WIRE
+    - ACH
+    - ZELLE
+  income_keywords:
+    - SALARY
+    - DEPOSIT
+    - REFUND
+    - PAYMENT RECEIVED
+```
+
+### Generic Parser Engine
 
 ```javascript
-// parsers/bofa.js
+// parsers/generic-parser.js
+
+async function parseWithConfig(pdfText, bankId) {
+  // 1. Load config from DB or YAML
+  const config = await loadParserConfig(bankId);
+
+  // 2. Detect statement date
+  const statementDate = extractStatementDate(pdfText, config);
+
+  // 3. Find transaction section
+  const lines = pdfText.split('\n');
+  const startIndex = lines.findIndex(line =>
+    line.includes(config.parsing.start_marker)
+  );
+
+  if (startIndex === -1) {
+    throw new Error(`No se encontró "${config.parsing.start_marker}"`);
+  }
+
+  // 4. Parse each transaction line
+  const transactions = [];
+  for (let i = startIndex + 1; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Check end marker
+    if (line.includes(config.parsing.end_marker) || line.trim() === '') {
+      break;
+    }
+
+    const txn = parseTransactionLine(line, config, statementDate, i);
+    if (txn) {
+      transactions.push(txn);
+    }
+  }
+
+  return transactions;
+}
+
+function parseTransactionLine(line, config, statementDate, lineNumber) {
+  // Extract fields using config regexes
+  const date = extractField(line, config.parsing.fields.date);
+  const description = extractField(line, config.parsing.fields.description);
+  const amount = extractField(line, config.parsing.fields.amount);
+
+  if (!date || !description || !amount) {
+    return null;
+  }
+
+  // Parse date
+  const fullDate = parseDate(date, config.parsing.date_format, statementDate);
+
+  // Parse amount
+  const numericAmount = parseAmount(
+    amount,
+    config.parsing.decimal_separator,
+    config.parsing.thousands_separator
+  );
+
+  // Cleanup description
+  let cleanDescription = description.trim();
+  if (config.parsing.fields.description.cleanup) {
+    for (const rule of config.parsing.fields.description.cleanup) {
+      if (rule.remove) {
+        cleanDescription = cleanDescription.replace(new RegExp(rule.remove, 'g'), '');
+      }
+    }
+  }
+
+  // Classify type
+  const type = classifyTransaction(cleanDescription, config.classification);
+
+  return {
+    date: fullDate,
+    description: cleanDescription,
+    amount: numericAmount.toString(),
+    currency: getCurrency(config.country),
+    type,
+    lineNumber
+  };
+}
+
+function classifyTransaction(description, classification) {
+  const desc = description.toUpperCase();
+
+  // Check transfer keywords
+  if (classification.transfer_keywords.some(kw => desc.includes(kw))) {
+    return 'transfer';
+  }
+
+  // Check income keywords
+  if (classification.income_keywords.some(kw => desc.includes(kw))) {
+    return 'income';
+  }
+
+  return 'expense';
+}
+
+async function loadParserConfig(bankId) {
+  // Try DB first
+  const config = await db.get(
+    'SELECT * FROM parser_configs WHERE id = ? AND is_active = TRUE',
+    bankId
+  );
+
+  if (config) {
+    // Parse JSON config
+    return {
+      ...config,
+      detection_keywords: JSON.parse(config.detection_keywords),
+      field_config: JSON.parse(config.field_config),
+      transfer_keywords: JSON.parse(config.transfer_keywords),
+      income_keywords: JSON.parse(config.income_keywords)
+    };
+  }
+
+  // Fallback to YAML file
+  const yaml = require('js-yaml');
+  const fs = require('fs');
+  const configPath = `./configs/parsers/${bankId}.yaml`;
+
+  if (fs.existsSync(configPath)) {
+    const content = fs.readFileSync(configPath, 'utf8');
+    return yaml.load(content);
+  }
+
+  throw new Error(`No config found for bank: ${bankId}`);
+}
+
+module.exports = { parseWithConfig };
+```
+
+---
+
+## BofA-Specific Implementation (Old Approach)
+
+**⚠️ Este código es el approach V1 hardcoded. En la versión final, este parser específico NO existiría - todo usaría el generic parser con configs.**
+
+```javascript
+// parsers/bofa.js (deprecated - solo para referencia)
 
 function parseBofA(text) {
   const lines = text.split('\n');

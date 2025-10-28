@@ -188,28 +188,28 @@
     <div class="container">
         <div class="hero">
             <h1>📊 Finance App V1</h1>
-            <p>Simple pero completa - Una app para manejar todas tus cuentas bancarias</p>
-            <p class="subtitle">~1,800 LOC | 4 bancos | Timeline continuo | Local-first</p>
+            <p>Sistema completo de finanzas personales - Documentado primero, construido incremental</p>
+            <p class="subtitle">~3,900 LOC | 168 features | 4 phases | Config-driven | Local-first</p>
         </div>
 
         <div class="content">
             <!-- Stats -->
             <div class="stats">
                 <div class="stat-card">
-                    <span class="number">22</span>
+                    <span class="number">30+</span>
                     <span class="label">Documentos</span>
                 </div>
                 <div class="stat-card">
-                    <span class="number">~1,800</span>
-                    <span class="label">LOC Total</span>
+                    <span class="number">168</span>
+                    <span class="label">Features Totales</span>
+                </div>
+                <div class="stat-card">
+                    <span class="number">~3,900</span>
+                    <span class="label">LOC (Desktop)</span>
                 </div>
                 <div class="stat-card">
                     <span class="number">4</span>
-                    <span class="label">Bancos soportados</span>
-                </div>
-                <div class="stat-card">
-                    <span class="number">~12k</span>
-                    <span class="label">Transacciones</span>
+                    <span class="label">Phases</span>
                 </div>
             </div>
 
@@ -217,36 +217,51 @@
             <div class="section">
                 <h2>🚀 Empieza aquí</h2>
                 <div class="docs-grid">
+                    <a href="README.md" class="doc-card featured">
+                        <h3>📘 README</h3>
+                        <p>Overview completo del proyecto, arquitectura, y roadmap de construcción.</p>
+                        <span class="tag">⭐ EMPIEZA AQUÍ</span>
+                    </a>
                     <a href="STORYTELLING.md" class="doc-card featured">
                         <h3>📖 STORYTELLING</h3>
-                        <p>La historia completa de cómo Darwin usa Finance App desde el día 1. Empieza aquí para entender todo.</p>
-                        <span class="tag">⭐ RECOMENDADO</span>
+                        <p>La historia completa de cómo Darwin usa Finance App desde el día 1.</p>
+                        <span class="tag">⭐ EXPERIENCIA</span>
                     </a>
-                    <a href="flow-1-timeline-continuo.md" class="doc-card featured">
+                    <a href="flow-1-timeline-continuo.md" class="doc-card">
                         <h3>⏱️ Timeline Continuo</h3>
-                        <p>El concepto más importante: UN flujo para todo. Sin separación setup vs daily use.</p>
-                        <span class="tag">⭐ CONCEPTO CLAVE</span>
-                    </a>
-                    <a href="README.md" class="doc-card">
-                        <h3>📘 README</h3>
-                        <p>Overview del proyecto, tech stack, y estructura.</p>
+                        <p>El concepto clave: UN flujo para todo. Sin separación setup vs daily use.</p>
                     </a>
                 </div>
             </div>
 
-            <!-- Foundation -->
+            <!-- Complete System -->
             <div class="section">
-                <h2>🏗️ Foundation</h2>
+                <h2>🎯 Sistema Completo (Foundation)</h2>
                 <div class="docs-grid">
+                    <a href="SYSTEM-COMPLETE-SCOPE.md" class="doc-card featured">
+                        <h3>📊 Sistema Completo</h3>
+                        <p>168 features organizadas en 28 áreas. El scope completo del proyecto.</p>
+                        <span class="tag">⭐ TODAS LAS FEATURES</span>
+                    </a>
+                    <a href="ARCHITECTURE-COMPLETE.md" class="doc-card featured">
+                        <h3>🏗️ Arquitectura</h3>
+                        <p>Diseño de 1 tabla core + auxiliares. Simple pero escalable, config-driven.</p>
+                        <span class="tag">⭐ ARQUITECTURA</span>
+                    </a>
+                    <a href="ROADMAP.md" class="doc-card featured">
+                        <h3>🗓️ Roadmap</h3>
+                        <p>Plan de construcción por fases (10-13 semanas). Build incremental.</p>
+                        <span class="tag">⭐ ROADMAP</span>
+                    </a>
                     <a href="0-scope.md" class="doc-card">
-                        <h3>Scope</h3>
-                        <p>Qué SÍ y qué NO está en V1. Límites claros del proyecto.</p>
-                        <span class="tag">3 min read</span>
+                        <h3>Phase 1 Scope</h3>
+                        <p>Qué está en Phase 1 (MVP). Límites claros del MVP.</p>
+                        <span class="tag">Phase 1</span>
                     </a>
                     <a href="1-architecture.md" class="doc-card">
-                        <h3>Architecture</h3>
-                        <p>2 tablas, 4-stage pipeline, tech stack completo.</p>
-                        <span class="tag">10 min read</span>
+                        <h3>Architecture Detail</h3>
+                        <p>Detalles técnicos de la arquitectura de 1 tabla.</p>
+                        <span class="tag">Technical</span>
                     </a>
                 </div>
             </div>
@@ -280,27 +295,27 @@
 
             <!-- Parsers -->
             <div class="section">
-                <h2>🏦 Parsers</h2>
+                <h2>🏦 Parsers (Config-Driven)</h2>
                 <div class="docs-grid">
                     <a href="parser-bofa.md" class="doc-card">
                         <h3>Bank of America</h3>
-                        <p>Parser para statements de BofA (USD).</p>
-                        <span class="tag">~110 LOC</span>
+                        <p>Config-driven parser para BofA. Agrega bancos sin código.</p>
+                        <span class="tag">Config-Driven</span>
                     </a>
                     <a href="parser-apple-card.md" class="doc-card">
                         <h3>Apple Card</h3>
-                        <p>Parser para Apple Card statements (USD).</p>
-                        <span class="tag">~105 LOC</span>
+                        <p>Parser config para Apple Card statements (USD).</p>
+                        <span class="tag">YAML Config</span>
                     </a>
                     <a href="parser-wise.md" class="doc-card">
                         <h3>Wise</h3>
-                        <p>Parser multi-currency (USD, EUR, etc).</p>
-                        <span class="tag">~135 LOC</span>
+                        <p>Multi-currency parser config (USD, EUR, etc).</p>
+                        <span class="tag">Multi-Currency</span>
                     </a>
                     <a href="parser-scotia.md" class="doc-card">
                         <h3>Scotiabank</h3>
-                        <p>Parser en español para MXN.</p>
-                        <span class="tag">~145 LOC</span>
+                        <p>Parser en español para MXN con config YAML.</p>
+                        <span class="tag">Español | MXN</span>
                     </a>
                 </div>
             </div>
@@ -370,11 +385,39 @@
                     </a>
                 </div>
             </div>
+
+            <!-- Advanced Features -->
+            <div class="section">
+                <h2>🚀 Advanced Features (Phases 2-4)</h2>
+                <div class="docs-grid">
+                    <a href="CATEGORIES-BUDGETS.md" class="doc-card featured">
+                        <h3>📊 Categories & Budgets</h3>
+                        <p>Phase 2: Sistema de categorías jerárquicas, budgets con alertas, recurring detection, tags.</p>
+                        <span class="tag">Phase 2 | ~1,000 LOC</span>
+                    </a>
+                    <a href="REPORTS-EXPORT.md" class="doc-card featured">
+                        <h3>📈 Reports & Export</h3>
+                        <p>Phase 3: 6 reports pre-built, custom report builder, export a CSV/PDF/JSON, charts.</p>
+                        <span class="tag">Phase 3 | ~800 LOC</span>
+                    </a>
+                    <a href="MULTI-USER.md" class="doc-card featured">
+                        <h3>👥 Multi-User</h3>
+                        <p>Phase 4: Sistema de auth, user management, data isolation, REST API para mobile.</p>
+                        <span class="tag">Phase 4 | ~300 LOC</span>
+                    </a>
+                    <a href="MOBILE-APP.md" class="doc-card featured">
+                        <h3>📱 Mobile App</h3>
+                        <p>Phase 4: React Native app con OCR para receipts, offline mode, sync con desktop.</p>
+                        <span class="tag">Phase 4 | ~1,000 LOC</span>
+                    </a>
+                </div>
+            </div>
         </div>
 
         <div class="footer">
-            <p><strong>Finance App V1</strong> • Octubre 2025 • <a href="https://github.com/darwinborges/finance-app-v1" target="_blank">View on GitHub</a></p>
-            <p style="margin-top: 10px; opacity: 0.8;">Documentación completa • Simple pero completo • Local-first</p>
+            <p><strong>Finance App V1 - Sistema Completo</strong> • Octubre 2025 • <a href="https://github.com/DarwinQVO/finance-app-v1" target="_blank">View on GitHub</a></p>
+            <p style="margin-top: 10px; opacity: 0.8;">168 features • 4 phases • Config-driven • Documentado primero, construido incremental</p>
+            <p style="margin-top: 10px; opacity: 0.7; font-size: 0.9rem;">Simple pero escalable • No over-engineering • No limitante</p>
         </div>
     </div>
 </body>
