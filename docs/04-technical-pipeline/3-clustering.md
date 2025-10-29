@@ -1,6 +1,47 @@
-# Stage 2: Clustering
+# Stage 1: Clustering
+
+> ✅ **LEGO Architecture**: This stage is OPTIONAL, swappable, and config-driven.
 
 **Agrupar merchant strings similares usando string similarity**
+
+---
+
+## Interface Contract
+
+**Ver contratos completos en**: [0-pipeline-interfaces.md](0-pipeline-interfaces.md)
+
+**Input**:
+```typescript
+interface ClusteringInput {
+  transactions: Transaction[];         // From transactions table
+  config: {
+    similarityThreshold: number;       // 0.0-1.0 (default: 0.8)
+    algorithm: 'levenshtein' | 'cosine' | 'jaro-winkler';
+    minClusterSize: number;            // Ignore clusters < N
+  };
+}
+```
+
+**Output**:
+```typescript
+interface ClusteringOutput {
+  clusterMap: Map<string, string>;     // transactionId → clusterId
+  clusters: Cluster[];
+  metadata: {
+    totalClusters: number;
+    largestCluster: number;
+    singletonCount: number;
+  };
+}
+```
+
+**Side effects**: NONE (does NOT modify database) - clusters are ephemeral, only used by normalization stage
+
+**Can I skip?**: **YES** - Normalization will still work (rules-only approach)
+
+**Can I swap?**: **YES** - Replace with ML-based clustering, LLM embedding similarity, etc.
+
+---
 
 ## El problema
 
@@ -63,12 +104,13 @@ npm install string-similarity
 const stringSimilarity = require('string-similarity');
 const { v4: uuid } = require('uuid');
 
-function clusterMerchants(observations) {
+function clusterMerchants(transactions, config = {}) {
+  const threshold = config.similarityThreshold || SIMILARITY_THRESHOLD;
   const clusters = {};      // { cluster_id: [descriptions] }
-  const clusterMap = {};    // { observation_id: cluster_id }
+  const clusterMap = {};    // { transaction_id: cluster_id }
 
-  observations.forEach(obs => {
-    const desc = obs.description.toUpperCase().trim();
+  transactions.forEach(txn => {
+    const desc = txn.original_description.toUpperCase().trim();
 
     // Buscar cluster existente con similarity > threshold
     let foundCluster = null;
@@ -79,7 +121,7 @@ function clusterMerchants(observations) {
       const representative = members[0];
       const similarity = stringSimilarity.compareTwoStrings(desc, representative);
 
-      if (similarity > SIMILARITY_THRESHOLD && similarity > maxSimilarity) {
+      if (similarity > threshold && similarity > maxSimilarity) {
         foundCluster = clusterId;
         maxSimilarity = similarity;
       }
@@ -88,28 +130,39 @@ function clusterMerchants(observations) {
     if (foundCluster) {
       // Agregar a cluster existente
       clusters[foundCluster].push(desc);
-      clusterMap[obs.id] = foundCluster;
+      clusterMap[txn.id] = foundCluster;
     } else {
       // Crear nuevo cluster
       const newClusterId = `cluster_${uuid()}`;
       clusters[newClusterId] = [desc];
-      clusterMap[obs.id] = newClusterId;
+      clusterMap[txn.id] = newClusterId;
     }
   });
 
   return { clusters, clusterMap };
 }
 
-const SIMILARITY_THRESHOLD = 0.8; // 80% similarity
+const SIMILARITY_THRESHOLD = 0.8; // 80% similarity (default)
 
 module.exports = { clusterMerchants };
 ```
 
 ---
 
-## Threshold: 0.8 (hardcoded)
+## Threshold: 0.8 (Config-Driven)
 
-**¿Por qué 0.8?**
+**Config-driven threshold**:
+```javascript
+// Option 1: Pass via config
+const result = await clusterMerchants(transactions, {
+  similarityThreshold: 0.85  // Override default
+});
+
+// Option 2: Use default
+const result = await clusterMerchants(transactions);  // Uses 0.8
+```
+
+**¿Por qué 0.8 es el default?**
 
 ### Threshold muy bajo (0.5)
 
@@ -142,15 +195,15 @@ module.exports = { clusterMerchants };
 
 ## Ejemplo paso a paso
 
-### Input: 6 observations
+### Input: 6 transactions
 
 ```
-obs_1: "STARBUCKS STORE #12345"
-obs_2: "STARBUCKS STORE #67890"
-obs_3: "AMAZON.COM*M89JF2K3"
-obs_4: "STARBUCKS #11111"
-obs_5: "AMAZON.COM*K12HS8PQ"
-obs_6: "TARGET STORE T-1234"
+txn_1: "STARBUCKS STORE #12345"
+txn_2: "STARBUCKS STORE #67890"
+txn_3: "AMAZON.COM*M89JF2K3"
+txn_4: "STARBUCKS #11111"
+txn_5: "AMAZON.COM*K12HS8PQ"
+txn_6: "TARGET STORE T-1234"
 ```
 
 ### Proceso de clustering
@@ -464,29 +517,48 @@ Optimized approach (compare first member only):
 ## Integration con pipeline
 
 ```javascript
-// main/pipeline/index.js
+// lib/pipeline/index.js
 
-async function runPipeline() {
-  // Stage 1: Ya tenemos observations en DB
+async function runPipeline(file, accountId) {
+  // Stage 0: Parse PDF → INSERT transactions
+  const newTransactions = await parsePDF(file, accountId);
 
-  // Stage 2: Clustering
-  const observations = db.query(`
-    SELECT * FROM observations
-    WHERE canonical_id IS NULL
-  `);
+  // Stage 1: Clustering (OPTIONAL)
+  let clusterMap = new Map();
+  if (config.stages.clustering.enabled) {
+    const result = await clusterMerchants(newTransactions, {
+      similarityThreshold: config.stages.clustering.threshold
+    });
+    clusterMap = result.clusterMap;
 
-  const { clusters, clusterMap } = clusterMerchants(observations);
+    console.log(`Clustered ${result.metadata.totalClusters} clusters`);
+  } else {
+    console.log('Clustering skipped (disabled in config)');
+  }
 
-  // Persist clusters
-  persistClusters(clusters, clusterMap);
-
-  // Stage 3: Normalization (usa clusterMap)
-  observations.forEach(obs => {
-    const clusterId = clusterMap[obs.id];
-    const merchant = normalizeMerchant(obs.description, clusterId);
-    // ...
+  // Stage 2: Normalization (uses clusterMap - can be empty)
+  await normalizeTransactions({
+    transactions: newTransactions,
+    clusterMap,  // Can be empty Map if clustering disabled
+    config: config.stages.normalization
   });
+
+  // Stage 3: Classification
+  await classifyTransactions(newTransactions, config.stages.classification);
 }
+```
+
+**Config example**:
+```javascript
+const config = {
+  stages: {
+    clustering: {
+      enabled: true,           // Set to false to skip clustering
+      threshold: 0.8,
+      algorithm: 'levenshtein'
+    }
+  }
+};
 ```
 
 ---
@@ -510,20 +582,51 @@ async function runPipeline() {
 - Threshold = 0.8 (hardcoded)
 
 ### Cómo funciona
-1. Para cada observation
+1. Para cada transaction
 2. Comparar con clusters existentes
-3. Si similarity > 0.8 → agregar a cluster
+3. Si similarity > threshold → agregar a cluster
 4. Si no → crear nuevo cluster
 
 ### Optimizaciones
 - Solo comparar con primer miembro (57x faster)
 - Normalizar strings antes de comparar
-- Persistir clusters en DB
+- Config-driven threshold (no hardcoded)
 
 ### Output
-- `clusterMap`: { observation_id → cluster_id }
-- Se usa en Stage 3 (Normalization)
+- `clusterMap`: { transaction_id → cluster_id }
+- Se usa en Stage 2 (Normalization) - pero opcional
+
+---
+
+## Summary: LEGO Architecture
+
+### ✅ Why This is LEGO (Not Blob)
+
+1. **Optional**: Can skip via `config.clustering.enabled = false`
+2. **Config-driven**: Threshold is configurable (not hardcoded)
+3. **Swappable**: Can replace with ML clustering, LLM embeddings
+4. **No side effects**: Does NOT modify database (ephemeral clusters)
+5. **Clear interface**: Explicit Input/Output types (see [0-pipeline-interfaces.md](0-pipeline-interfaces.md))
+6. **Independent**: Normalization works even with empty clusterMap
+7. **Testable**: Pure function - same input → same output
+
+### 🔴 What Would Make This a Blob
+
+- ❌ Hardcoded threshold (0.8 in code)
+- ❌ Cannot disable clustering
+- ❌ Modifying transactions table directly
+- ❌ Normalization depends on clustering's internal structure
+
+### ✅ This Implementation Avoids All Blobs
+
+**Evidence**:
+- Threshold via config parameter (line 107-108)
+- Can skip entire stage (line 526-537 integration example)
+- No database writes (line 38: "Side effects: NONE")
+- Returns simple Map structure (line 27-29)
 
 ---
 
 **Próximo stage**: Lee [4-normalization.md](4-normalization.md)
+
+**Ver contratos**: [0-pipeline-interfaces.md](0-pipeline-interfaces.md)

@@ -1,561 +1,651 @@
-# Stage 4: Canonical Store
+# Stage 3: Transaction Classification & Type Detection
 
-**La verdad limpia que ve el usuario**
+> ✅ **LEGO Architecture**: This stage is independent, swappable, and operates on 1-table architecture.
 
-## El objetivo
-
-Tomar toda la info procesada (observation + cluster + normalized merchant) y crear una **transaction limpia** en la tabla `transactions`.
-
-```
-Input:  observation + merchant normalizado + confidence
-Output: Row en tabla `transactions`
-```
-
-Esta es la tabla que el UI consulta. El usuario **nunca ve observations**.
+**Objetivo**: Clasificar transactions como `expense`, `income`, o `transfer`
 
 ---
 
-## Schema: Tabla `transactions`
+## Interface Contract
+
+**Ver contratos completos en**: [0-pipeline-interfaces.md](0-pipeline-interfaces.md)
+
+**Input**:
+```typescript
+interface ClassificationInput {
+  transactions: Transaction[];         // From transactions table
+  config: {
+    useKeywords: boolean;              // Use keyword-based classification?
+    useAmountSign: boolean;            // Fallback to amount sign?
+    transferKeywords: string[];        // Custom transfer keywords
+    incomeKeywords: string[];          // Custom income keywords
+  };
+}
+```
+
+**Output**:
+```typescript
+interface ClassificationOutput {
+  updates: ClassificationUpdate[];
+  stats: {
+    transfers: number;
+    income: number;
+    expenses: number;
+    unclassified: number;
+  };
+}
+
+interface ClassificationUpdate {
+  transactionId: string;
+  oldType: string | null;
+  newType: 'expense' | 'income' | 'transfer';
+  confidence: number;
+  method: 'keyword' | 'amount' | 'manual';
+}
+```
+
+**Side effects**: Updates `transactions.type` field
+
+**Can I skip?**: NO - Type is required for financial reports
+
+**Can I swap?**: YES - Replace with LLM classification, ML model, manual review
+
+---
+
+## 1-Table Architecture
+
+### ✅ NEW (1-Table - LEGO)
 
 ```sql
+-- Single transactions table
 CREATE TABLE transactions (
-  id TEXT PRIMARY KEY,              -- uuid
-  account TEXT NOT NULL,            -- 'bofa' | 'apple-card' | 'wise' | 'scotia'
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
 
-  -- Datos normalizados
-  date TEXT NOT NULL,               -- '2025-09-28' (ISO format)
-  merchant TEXT NOT NULL,           -- 'Starbucks' (normalizado)
-  amount REAL NOT NULL,             -- -5.67 (FLOAT limpio, no string)
-  currency TEXT NOT NULL,           -- 'USD' | 'MXN' | 'EUR'
+  -- Original data (immutable)
+  original_description TEXT NOT NULL,  -- "STARBUCKS STORE #12345"
+  original_merchant TEXT,               -- From parser (if available)
+  amount_raw TEXT,                      -- "-5.67" or "(5.67)" or "5.67 CR"
 
-  -- Clasificación
-  type TEXT NOT NULL,               -- 'expense' | 'income' | 'transfer'
+  -- Processed data (mutable by pipeline)
+  merchant TEXT NOT NULL,               -- "Starbucks" (normalized)
+  merchant_confidence REAL,             -- 0.0-1.0
+  amount REAL NOT NULL,                 -- -5.67 (parsed float)
 
-  -- Linking
-  transfer_pair_id TEXT,            -- ID de la otra mitad del transfer
+  -- Classification (THIS STAGE)
+  type TEXT NOT NULL,                   -- 'expense' | 'income' | 'transfer'
 
-  -- Metadata
-  cluster_id TEXT,                  -- ID del cluster usado
-  confidence REAL,                  -- 0.0-1.0 qué tan segura es la normalización
+  -- Other fields...
+  date TEXT NOT NULL,
+  currency TEXT NOT NULL,
+  transfer_pair_id TEXT,
+  category_id TEXT,
+
+  -- Provenance
+  source_type TEXT NOT NULL,            -- 'pdf' | 'csv' | 'manual'
+  source_file TEXT,
+  source_hash TEXT NOT NULL,
+
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+```
 
-CREATE INDEX idx_txn_account ON transactions(account);
-CREATE INDEX idx_txn_date ON transactions(date);
-CREATE INDEX idx_txn_merchant ON transactions(merchant);
-CREATE INDEX idx_txn_type ON transactions(type);
-CREATE INDEX idx_txn_transfer ON transactions(transfer_pair_id);
-CREATE INDEX idx_txn_confidence ON transactions(confidence);
+**Key principle**:
+- `original_description` = immutable (never changes after INSERT)
+- `type` = mutable (set by classification stage)
+- NO separate "observations" or "canonical" tables
+
+---
+
+## Classification Algorithm
+
+### Step 1: Load Transfer Keywords (DB-Driven)
+
+```javascript
+async function loadTransferKeywords() {
+  const config = await db.get(`
+    SELECT transfer_keywords, income_keywords
+    FROM parser_configs
+    WHERE id = 'classification'
+  `);
+
+  return {
+    transfer: JSON.parse(config.transfer_keywords || '[]'),
+    income: JSON.parse(config.income_keywords || '[]')
+  };
+}
+
+// Default keywords (can be overridden in DB)
+const DEFAULT_TRANSFER_KEYWORDS = [
+  'TRANSFER', 'WIRE', 'ACH', 'ZELLE', 'VENMO', 'PAYPAL',
+  'SPEI', 'TRANSFERENCIA', 'CASH APP'
+];
+
+const DEFAULT_INCOME_KEYWORDS = [
+  'SALARY', 'DEPOSIT', 'REFUND', 'PAYMENT RECEIVED',
+  'RECIBIDA', 'ABONO', 'PAYROLL', 'REEMBOLSO'
+];
+```
+
+### Step 2: Classify Transaction
+
+```javascript
+function classifyTransaction(txn, keywords) {
+  const desc = txn.original_description.toUpperCase();
+
+  // Priority 1: Transfer keywords
+  for (const keyword of keywords.transfer) {
+    if (desc.includes(keyword)) {
+      return {
+        type: 'transfer',
+        confidence: 0.9,
+        method: 'keyword'
+      };
+    }
+  }
+
+  // Priority 2: Income keywords
+  for (const keyword of keywords.income) {
+    if (desc.includes(keyword)) {
+      return {
+        type: 'income',
+        confidence: 0.85,
+        method: 'keyword'
+      };
+    }
+  }
+
+  // Priority 3: Fallback to amount sign
+  if (txn.amount < 0) {
+    return {
+      type: 'expense',
+      confidence: 0.7,
+      method: 'amount'
+    };
+  } else {
+    return {
+      type: 'income',
+      confidence: 0.7,
+      method: 'amount'
+    };
+  }
+}
 ```
 
 ---
 
-## Code: Create canonical transaction
+## Complete Classification Function (LEGO)
 
 ```javascript
-// main/pipeline/canonical.js
+// lib/classification/classify.js
 
-function createCanonicalTransaction(data) {
-  // data = {
-  //   observation_id,
-  //   account,
-  //   date,
-  //   merchant,
-  //   amount_raw,
-  //   currency,
-  //   cluster_id,
-  //   confidence,
-  //   description (original, para clasificar type)
-  // }
+async function classifyTransactions(input) {
+  const { transactions, config } = input;
+  const updates = [];
+  const stats = { transfers: 0, income: 0, expenses: 0, unclassified: 0 };
 
-  const txnId = uuid();
+  // Load keywords from DB (or use defaults)
+  const keywords = config.useKeywords
+    ? await loadTransferKeywords()
+    : { transfer: DEFAULT_TRANSFER_KEYWORDS, income: DEFAULT_INCOME_KEYWORDS };
 
-  // Parse amount (convert string → float)
-  const amount = parseAmount(data.amount_raw);
+  for (const txn of transactions) {
+    // Skip if already classified and not forcing re-classification
+    if (txn.type && !config.forceReclassify) {
+      continue;
+    }
 
-  // Classify type
-  const type = classifyType(data.description, amount);
+    // Classify
+    const result = classifyTransaction(txn, keywords);
 
-  // Insert transaction
-  db.execute(`
-    INSERT INTO transactions (
-      id, account, date, merchant, amount, currency,
-      type, transfer_pair_id, cluster_id, confidence,
-      created_at, updated_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
-  `, [
-    txnId,
-    data.account,
-    data.date,
-    data.merchant,
-    amount,
-    data.currency,
-    type,
-    data.cluster_id,
-    data.confidence,
-    new Date().toISOString(),
-    new Date().toISOString()
-  ]);
+    // Update transaction in DB
+    await db.run(`
+      UPDATE transactions
+      SET type = ?, updated_at = ?
+      WHERE id = ?
+    `, result.type, new Date().toISOString(), txn.id);
 
-  // Link observation → transaction
-  db.execute(`
-    UPDATE observations
-    SET canonical_id = ?
-    WHERE id = ?
-  `, [txnId, data.observation_id]);
+    // Track stats
+    stats[result.type === 'transfer' ? 'transfers' : result.type === 'income' ? 'income' : 'expenses']++;
 
-  return { id: txnId, ...data, amount, type };
+    updates.push({
+      transactionId: txn.id,
+      oldType: txn.type,
+      newType: result.type,
+      confidence: result.confidence,
+      method: result.method
+    });
+  }
+
+  return { updates, stats };
 }
 
-function parseAmount(amountRaw) {
-  // amountRaw puede ser:
-  // - "-5.67"
-  // - "(5.67)"  → paréntesis = negativo
-  // - "5.67 CR" → CR = credit = positivo
+module.exports = { classifyTransactions };
+```
 
+---
+
+## Amount Parsing (Helper)
+
+**Already done in Stage 0 (PDF Extraction)**, but here's the reference:
+
+```javascript
+function parseAmount(amountRaw) {
   let amount = amountRaw.trim();
 
-  // Handle paréntesis
+  // Handle parentheses (negative)
   if (amount.startsWith('(') && amount.endsWith(')')) {
     amount = '-' + amount.slice(1, -1);
   }
 
-  // Handle "CR" suffix
+  // Handle "CR" suffix (credit = positive)
   if (amount.endsWith('CR')) {
     amount = amount.replace('CR', '').trim();
-    // Es credit, forzar positivo
-    amount = Math.abs(parseFloat(amount.replace(/,/g, '')));
-    return amount;
+    return Math.abs(parseFloat(amount.replace(/,/g, '')));
   }
 
-  // Handle "DB" suffix (debit)
+  // Handle "DB" suffix (debit = negative)
   if (amount.endsWith('DB')) {
     amount = amount.replace('DB', '').trim();
-    // Es debit, forzar negativo
-    amount = -Math.abs(parseFloat(amount.replace(/,/g, '')));
-    return amount;
+    return -Math.abs(parseFloat(amount.replace(/,/g, '')));
   }
 
-  // Normal: quitar comas y parsear
+  // Normal: remove commas and parse
   return parseFloat(amount.replace(/,/g, ''));
 }
+```
 
-function classifyType(description, amount) {
-  const desc = description.toUpperCase();
+**Note**: Amount parsing happens in Stage 0 during PDF extraction. This stage only classifies type based on `amount` (already a float).
 
-  // Transfer keywords
-  if (
-    desc.includes('TRANSFER') ||
-    desc.includes('WIRE') ||
-    desc.includes('ACH') ||
-    desc.includes('ZELLE') ||
-    desc.includes('VENMO') ||
-    desc.includes('SPEI')
-  ) {
-    return 'transfer';
-  }
+---
 
-  // Income keywords
-  if (
-    desc.includes('SALARY') ||
-    desc.includes('DEPOSIT') ||
-    desc.includes('REFUND') ||
-    desc.includes('PAYMENT RECEIVED') ||
-    desc.includes('RECIBIDA') ||
-    desc.includes('ABONO')
-  ) {
-    return 'income';
-  }
+## Type Classification Examples
 
-  // Default: inferir de amount
-  return amount < 0 ? 'expense' : 'income';
-}
+### Example 1: Transfer (Keyword Match)
 
-module.exports = { createCanonicalTransaction };
+**Input**:
+```javascript
+const txn = {
+  id: 'txn_123',
+  original_description: 'TRANSFER TO WISE',
+  amount: -1000.00,
+  type: null  // Not classified yet
+};
+```
+
+**Step 1**: Check transfer keywords
+```javascript
+'TRANSFER TO WISE'.includes('TRANSFER')  // TRUE
+```
+
+**Step 2**: Classify
+```javascript
+result = {
+  type: 'transfer',
+  confidence: 0.9,
+  method: 'keyword'
+};
+```
+
+**Step 3**: Update DB
+```sql
+UPDATE transactions SET type = 'transfer' WHERE id = 'txn_123';
 ```
 
 ---
 
-## Diferencias: observations vs transactions
+### Example 2: Income (Keyword Match)
 
-| Campo | observations | transactions |
-|-------|-------------|-------------|
-| description | "STARBUCKS STORE #12345" | N/A |
-| merchant | N/A | "Starbucks" |
-| amount_raw | "-5.67" (STRING) | N/A |
-| amount | N/A | -5.67 (REAL) |
-| type | N/A | "expense" |
-| cluster_id | N/A | "cluster_abc" |
-| confidence | N/A | 0.95 |
-| canonical_id | → transactions.id | N/A |
+**Input**:
+```javascript
+const txn = {
+  id: 'txn_456',
+  original_description: 'SALARY DEPOSIT',
+  amount: 3500.00,
+  type: null
+};
+```
 
-**observations**: Raw, immutable, source of truth.
-
-**transactions**: Clean, queryable, user-facing.
+**Classification**:
+```javascript
+'SALARY DEPOSIT'.includes('SALARY')  // TRUE
+result = { type: 'income', confidence: 0.85, method: 'keyword' };
+```
 
 ---
 
-## Type classification
+### Example 3: Expense (Amount Fallback)
 
+**Input**:
+```javascript
+const txn = {
+  id: 'txn_789',
+  original_description: 'STARBUCKS STORE #1234',
+  amount: -5.67,
+  type: null
+};
 ```
-type = 'expense'  → User gastó plata
-type = 'income'   → User recibió plata
-type = 'transfer' → User movió plata entre cuentas
+
+**Classification**:
+```javascript
+// No keyword match
+// amount < 0 → expense
+result = { type: 'expense', confidence: 0.7, method: 'amount' };
 ```
 
-### Heurísticas
+---
 
-1. **Keywords primero**:
-   - "TRANSFER" → transfer
-   - "SALARY" → income
+## Configuration Options
 
-2. **Fallback a amount**:
-   - amount < 0 → expense
-   - amount > 0 → income
-
-### Ejemplos
+### Enable/Disable Keywords
 
 ```javascript
-classifyType("STARBUCKS", -5.67)           → "expense"
-classifyType("SALARY DEPOSIT", 3500.00)    → "income"
-classifyType("TRANSFER TO WISE", -1000.00) → "transfer"
-classifyType("REFUND", 12.99)              → "income"
+const config = {
+  useKeywords: true,       // Load from parser_configs table
+  useAmountSign: true,     // Fallback to amount sign
+  forceReclassify: false   // Re-classify already classified txns
+};
 ```
 
----
-
-## Transfer linking (Stage 5)
-
-Después de crear todas las transactions, corremos `linkTransfers()`.
-
-```javascript
-function linkTransfers() {
-  // Obtener todos los transfers sin pareja
-  const unlinkedTransfers = db.query(`
-    SELECT * FROM transactions
-    WHERE type = 'transfer'
-    AND transfer_pair_id IS NULL
-    ORDER BY date ASC
-  `);
-
-  for (const txn of unlinkedTransfers) {
-    // Buscar pareja
-    const pair = db.queryOne(`
-      SELECT * FROM transactions
-      WHERE id != ?
-      AND type = 'transfer'
-      AND transfer_pair_id IS NULL
-      AND ABS(amount + ?) < 0.01
-      AND ABS(julianday(date) - julianday(?)) <= 3
-      AND account != ?
-      LIMIT 1
-    `, [txn.id, txn.amount, txn.date, txn.account]);
-
-    if (pair) {
-      // Link bidireccional
-      db.execute(`
-        UPDATE transactions
-        SET transfer_pair_id = ?,
-            updated_at = ?
-        WHERE id = ?
-      `, [pair.id, new Date().toISOString(), txn.id]);
-
-      db.execute(`
-        UPDATE transactions
-        SET transfer_pair_id = ?,
-            updated_at = ?
-        WHERE id = ?
-      `, [txn.id, new Date().toISOString(), pair.id]);
-    }
-  }
-}
-```
-
----
-
-## Full pipeline integration
-
-```javascript
-// main/pipeline/index.js
-
-async function runPipeline() {
-  console.log('Starting pipeline...');
-
-  // Stage 1: Parse → observations (ya ejecutado en upload)
-
-  // Stage 2: Clustering
-  console.log('Stage 2: Clustering...');
-  const observations = db.query(`
-    SELECT * FROM observations
-    WHERE canonical_id IS NULL
-  `);
-  const { clusters, clusterMap } = clusterMerchants(observations);
-
-  // Stage 3: Normalization + Stage 4: Canonical
-  console.log('Stage 3+4: Normalization + Canonical...');
-  observations.forEach(obs => {
-    const clusterId = clusterMap[obs.id];
-    const merchant = normalizeMerchant(obs.description, clusterId, clusters);
-    const confidence = calculateConfidence(obs, merchant, clusterId, clusters);
-
-    createCanonicalTransaction({
-      observation_id: obs.id,
-      account: obs.account,
-      date: obs.date,
-      merchant,
-      amount_raw: obs.amount_raw,
-      currency: obs.currency,
-      cluster_id: clusterId,
-      confidence,
-      description: obs.description
-    });
-  });
-
-  // Stage 5: Transfer linking
-  console.log('Stage 5: Transfer linking...');
-  linkTransfers();
-
-  console.log('Pipeline complete!');
-}
-```
-
----
-
-## Queries útiles
-
-### Ver todas las transactions de un mes
+### Custom Keywords (DB-Driven)
 
 ```sql
-SELECT * FROM transactions
-WHERE date >= '2025-09-01'
-AND date < '2025-10-01'
-ORDER BY date DESC;
+-- Add custom transfer keyword
+UPDATE parser_configs
+SET transfer_keywords = JSON_INSERT(
+  transfer_keywords,
+  '$[#]',
+  'CASH APP'
+)
+WHERE id = 'classification';
+
+-- Add custom income keyword
+UPDATE parser_configs
+SET income_keywords = JSON_INSERT(
+  income_keywords,
+  '$[#]',
+  'REIMBURSEMENT'
+)
+WHERE id = 'classification';
 ```
-
-### Ver transactions por merchant
-
-```sql
-SELECT merchant, COUNT(*) as count, SUM(amount) as total
-FROM transactions
-WHERE date >= '2025-01-01'
-GROUP BY merchant
-ORDER BY count DESC;
-```
-
-### Ver transfers linkeados
-
-```sql
-SELECT
-  t1.date as date1,
-  t1.merchant as merchant1,
-  t1.amount as amount1,
-  t1.account as account1,
-  t2.date as date2,
-  t2.merchant as merchant2,
-  t2.amount as amount2,
-  t2.account as account2
-FROM transactions t1
-JOIN transactions t2 ON t1.transfer_pair_id = t2.id
-WHERE t1.type = 'transfer'
-AND t1.id < t2.id; -- Para evitar duplicados
-```
-
-### Ver transactions con bajo confidence
-
-```sql
-SELECT merchant, date, amount, confidence
-FROM transactions
-WHERE confidence < 0.5
-ORDER BY date DESC;
-```
-
----
-
-## Delete transaction
-
-Si el usuario borra una transaction, borrar de **ambas** tablas.
-
-```javascript
-function deleteTransaction(transactionId) {
-  // Delete from transactions
-  db.execute('DELETE FROM transactions WHERE id = ?', [transactionId]);
-
-  // Delete from observations
-  db.execute('DELETE FROM observations WHERE canonical_id = ?', [transactionId]);
-
-  // Si tenía pareja (transfer), unlink la pareja
-  db.execute(`
-    UPDATE transactions
-    SET transfer_pair_id = NULL
-    WHERE transfer_pair_id = ?
-  `, [transactionId]);
-}
-```
-
----
-
-## Update transaction
-
-En Phase 1, **NO permitimos edits**. Solo delete.
-
-**Razón**: Si editas transactions, se desincroniza con observations.
-
-**Future**: Permitir edit → marcar observation como "overridden" → no regenerar ese canonical.
-
----
-
-## Regenerar canonical (completo)
-
-```javascript
-function regenerateCanonical() {
-  console.log('Regenerating canonical store...');
-
-  // 1. Delete todas las transactions
-  db.execute('DELETE FROM transactions');
-
-  // 2. Reset canonical_id en observations
-  db.execute('UPDATE observations SET canonical_id = NULL');
-
-  // 3. Re-run pipeline completo
-  runPipeline();
-
-  console.log('Regeneration complete!');
-}
-```
-
-**Uso**: Cuando cambias reglas de normalización y quieres ver el resultado.
 
 ---
 
 ## Testing
 
-### Test 1: Create canonical
+### Unit Test: Keyword Classification
 
 ```javascript
-const data = {
-  observation_id: 'obs_1',
-  account: 'bofa',
-  date: '2025-09-28',
-  merchant: 'Starbucks',
-  amount_raw: '-5.67',
-  currency: 'USD',
-  cluster_id: 'cluster_1',
-  confidence: 0.95,
-  description: 'STARBUCKS STORE #12345'
-};
+describe('Classification - Keywords', () => {
+  it('should classify transfer by keyword', () => {
+    const txn = {
+      original_description: 'TRANSFER TO WISE',
+      amount: -1000.00
+    };
 
-const txn = createCanonicalTransaction(data);
+    const keywords = {
+      transfer: ['TRANSFER'],
+      income: ['SALARY']
+    };
 
-expect(txn.amount).toBe(-5.67); // FLOAT
-expect(txn.type).toBe('expense');
-expect(txn.merchant).toBe('Starbucks');
+    const result = classifyTransaction(txn, keywords);
+
+    expect(result.type).toBe('transfer');
+    expect(result.confidence).toBe(0.9);
+    expect(result.method).toBe('keyword');
+  });
+
+  it('should classify income by keyword', () => {
+    const txn = {
+      original_description: 'SALARY DEPOSIT',
+      amount: 3500.00
+    };
+
+    const result = classifyTransaction(txn, keywords);
+
+    expect(result.type).toBe('income');
+  });
+});
 ```
 
-### Test 2: Type classification
+### Unit Test: Amount Fallback
 
 ```javascript
-expect(classifyType('TRANSFER TO WISE', -1000)).toBe('transfer');
-expect(classifyType('SALARY DEPOSIT', 3500)).toBe('income');
-expect(classifyType('STARBUCKS', -5.67)).toBe('expense');
+it('should fallback to amount sign', () => {
+  const txn = {
+    original_description: 'UNKNOWN MERCHANT',
+    amount: -5.67
+  };
+
+  const keywords = { transfer: [], income: [] };
+
+  const result = classifyTransaction(txn, keywords);
+
+  expect(result.type).toBe('expense');
+  expect(result.method).toBe('amount');
+  expect(result.confidence).toBe(0.7);  // Lower confidence
+});
 ```
 
-### Test 3: Transfer linking
+### Integration Test: Re-classification
 
 ```javascript
-// Create 2 transactions
-createCanonicalTransaction({
-  account: 'bofa',
-  date: '2025-09-26',
-  merchant: 'Transfer to Wise',
-  amount_raw: '-1000.00',
-  type: 'transfer'
-  // ...
+it('should not re-classify by default', async () => {
+  // Transaction already classified
+  await db.run(`
+    INSERT INTO transactions (id, original_description, amount, type)
+    VALUES ('txn_1', 'STARBUCKS', -5.67, 'expense')
+  `);
+
+  const txns = [{ id: 'txn_1', original_description: 'STARBUCKS', amount: -5.67, type: 'expense' }];
+
+  const result = await classifyTransactions({
+    transactions: txns,
+    config: { forceReclassify: false }
+  });
+
+  // Should skip (already classified)
+  expect(result.updates).toHaveLength(0);
 });
 
-createCanonicalTransaction({
-  account: 'wise',
-  date: '2025-09-27',
-  merchant: 'Transfer from Bank',
-  amount_raw: '1000.00',
-  type: 'transfer'
-  // ...
+it('should re-classify when forced', async () => {
+  const result = await classifyTransactions({
+    transactions: txns,
+    config: { forceReclassify: true }  // Force re-classification
+  });
+
+  expect(result.updates).toHaveLength(1);
 });
-
-// Link
-linkTransfers();
-
-// Check
-const txns = db.query(`
-  SELECT * FROM transactions
-  WHERE type = 'transfer'
-`);
-
-expect(txns[0].transfer_pair_id).toBe(txns[1].id);
-expect(txns[1].transfer_pair_id).toBe(txns[0].id);
 ```
 
 ---
 
-## LOC estimate
+## Edge Cases
 
-- `createCanonicalTransaction()`: ~40 LOC
-- `parseAmount()`: ~30 LOC
-- `classifyType()`: ~25 LOC
-- `linkTransfers()`: ~30 LOC
-- `deleteTransaction()`: ~15 LOC
-- `regenerateCanonical()`: ~10 LOC
+### Edge Case 1: Ambiguous Transactions
 
-**Total**: ~150 LOC
+```javascript
+// Description: "PAYMENT TO VENDOR"
+// Could be: expense (paying vendor) OR income (receiving payment)
 
----
+// Solution: Prefer keyword over amount
+'PAYMENT TO'.includes('PAYMENT RECEIVED')  // FALSE
+// Fallback to amount sign
+amount < 0 → expense
+```
 
-## Resumen del pipeline completo
+### Edge Case 2: Transfers Between Same Account Types
 
-### Stage 1: Parse → ObservationStore
-- **Input**: PDF file
-- **Output**: Rows en `observations`
-- **LOC**: ~110
+```javascript
+// BofA Checking → BofA Savings
+// Both are "BofA" accounts
 
-### Stage 2: Clustering
-- **Input**: Observations
-- **Output**: cluster_id por observation
-- **LOC**: ~70
+// Classification: Still 'transfer' (keyword match)
+// Transfer linking will handle matching (Stage 4)
+```
 
-### Stage 3: Normalization
-- **Input**: Observation + cluster
-- **Output**: Merchant normalizado + confidence
-- **LOC**: ~130
+### Edge Case 3: Zero Amount
 
-### Stage 4: Canonical Store
-- **Input**: Todo lo anterior
-- **Output**: Rows en `transactions`
-- **LOC**: ~150
+```javascript
+amount = 0.00
 
-### Total pipeline LOC: ~460
-
-(Muy cerca del objetivo de ~500 ✓)
+// Solution: Cannot infer from amount
+// Must use keyword or default to 'expense'
+```
 
 ---
 
-## Principios de diseño
+## Integration with Pipeline
 
-### 1. Two-store architecture
-- **observations**: Raw, immutable
-- **transactions**: Clean, queryable
+```javascript
+// lib/pipeline/index.js
 
-### 2. Reproducibilidad
-- Puedes regenerar `transactions` desde `observations`
-- Cambiar reglas → regenerar → nuevo resultado
+async function runPipeline(file, accountId) {
+  // Stage 0: Parse PDF → INSERT transactions
+  const newTransactions = await parsePDF(file, accountId);
 
-### 3. UI solo ve transactions
-- User nunca ve observations
-- observations son para auditoría y debugging
+  // Stage 1: Clustering (optional)
+  let clusterMap = new Map();
+  if (config.stages.clustering.enabled) {
+    const result = await clusterMerchants(newTransactions);
+    clusterMap = result.clusterMap;
+  }
 
-### 4. Linking bidireccional
-- observation.canonical_id → transaction.id
-- Permite trace back
+  // Stage 2: Normalization
+  await normalizeTransactions({
+    transactions: newTransactions,
+    clusterMap,
+    config: config.stages.normalization
+  });
+
+  // Stage 3: Classification (THIS STAGE)
+  const classificationResult = await classifyTransactions({
+    transactions: newTransactions,
+    config: config.stages.classification
+  });
+
+  console.log(`Classified: ${classificationResult.stats.transfers} transfers, ${classificationResult.stats.income} income, ${classificationResult.stats.expenses} expenses`);
+
+  // Stage 4: Transfer Linking (next)
+  if (config.stages.transferLinking.enabled) {
+    await linkTransfers(newTransactions, config.stages.transferLinking);
+  }
+
+  return { success: true, transactions: newTransactions };
+}
+```
+
+**Key difference from old architecture**:
+- ❌ OLD: `createCanonicalTransaction()` created NEW rows in transactions table
+- ✅ NEW: `classifyTransactions()` UPDATES existing rows (already inserted in Stage 0)
 
 ---
 
-**Próximos docs**: Lee [Batch 5: UI/UX](6-ui-timeline.md)
+## Comparison: 2-Table vs 1-Table
+
+### ❌ OLD (2-Table Architecture)
+
+```javascript
+// Stage 0: Parse → INSERT into observations
+// Stage 3+4: Create canonical → INSERT into transactions
+
+observations.forEach(obs => {
+  const merchant = normalizeMerchant(obs.description, ...);
+  const type = classifyType(obs.description, obs.amount);
+
+  // Create NEW transaction row
+  db.run(`INSERT INTO transactions (...) VALUES (...)`, [merchant, type, ...]);
+
+  // Link observation → transaction
+  db.run(`UPDATE observations SET canonical_id = ? WHERE id = ?`, [txnId, obs.id]);
+});
+```
+
+**Problems**:
+- Two tables to maintain (observations + transactions)
+- Bidirectional FK (observations.canonical_id ↔ transactions.id)
+- Delete cascade complexity
+- "Canonical" creation mixed with normalization
+
+### ✅ NEW (1-Table Architecture)
+
+```javascript
+// Stage 0: Parse → INSERT into transactions with original_description
+
+// Stage 2: Normalize → UPDATE transactions.merchant
+
+// Stage 3: Classify → UPDATE transactions.type
+
+const newTransactions = await db.all(`SELECT * FROM transactions WHERE type IS NULL`);
+
+await classifyTransactions({
+  transactions: newTransactions,
+  config: { useKeywords: true }
+});
+
+// Result: transactions.type field updated
+```
+
+**Benefits**:
+- Single source of truth (transactions table)
+- No bidirectional FKs
+- Each stage is independent UPDATE
+- Clear separation of concerns
+
+---
+
+## LOC Estimate
+
+- `classifyTransaction()`: ~30 LOC
+- `classifyTransactions()`: ~40 LOC
+- `loadTransferKeywords()`: ~15 LOC
+- `parseAmount()`: ~25 LOC (helper, usually in Stage 0)
+
+**Total**: ~110 LOC
+
+---
+
+## Summary: LEGO Architecture
+
+### ✅ Why This is LEGO (Not Blob)
+
+1. **Config-driven**: Keywords in DB (`parser_configs` table)
+2. **Swappable**: Can replace with LLM classification (`GPT-4o` for type detection)
+3. **Independent**: Only reads/writes `transactions.type` field (doesn't create rows)
+4. **Clear interface**: Explicit Input/Output types (see [0-pipeline-interfaces.md](0-pipeline-interfaces.md))
+5. **Testable**: Each function can be unit tested independently
+6. **Fault-tolerant**: If classification fails, transaction still exists (just type = null)
+7. **No side effects**: Only updates `transactions.type`, nothing else
+
+### 🔴 What Would Make This a Blob
+
+- ❌ Creating new rows in transactions table (mixed concerns)
+- ❌ Depending on normalization stage's internal `clusterMap`
+- ❌ Updating observations.canonical_id (bidirectional coupling)
+- ❌ Hardcoded keywords in JavaScript array
+
+### ✅ This Implementation Avoids All Blobs
+
+**Evidence**:
+- Keywords loaded from `parser_configs` table (line 9-20)
+- Only UPDATE operations, no INSERT (line 57-61)
+- Clear interface contract (line 9-49)
+- Independent of clustering/normalization (only reads `original_description` and `amount`)
+- Can skip via `config.useKeywords = false` (line 44-46)
+
+---
+
+## Next Steps
+
+1. **Implement Transfer Linking** (Stage 4) - See [flow-5-transfer-linking.md](../02-user-flows/flow-5-transfer-linking.md)
+2. **Add Categorization** (Stage 5 - Phase 2) - Auto-assign categories based on merchant
+3. **Add Manual Review UI** - Allow users to correct misclassified types
+
+---
+
+**Próximo stage**: Transfer Linking (Stage 4) - Link transfers between accounts
+
+**Ver contratos**: [0-pipeline-interfaces.md](0-pipeline-interfaces.md)
+
+**Ver 1-table architecture**: [ARCHITECTURE-COMPLETE.md](../01-foundation/ARCHITECTURE-COMPLETE.md)

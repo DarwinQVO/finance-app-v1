@@ -1,498 +1,804 @@
-# Stage 3: Normalization
+# Stage 2: Merchant Normalization (DB-Driven)
 
-**Convertir "STARBUCKS STORE #12345" en "Starbucks"**
+> ✅ **LEGO Architecture**: This stage is config-driven (NOT hardcoded). Rules live in `normalization_rules` table.
 
-## El objetivo
-
-Tomar el description raw + cluster info y producir un **merchant name limpio**.
-
-```
-Input:  "STARBUCKS STORE #12345 SANTA MONICA CA"
-Output: "Starbucks"
-```
+**Objetivo**: Convertir "STARBUCKS STORE #12345" en "Starbucks"
 
 ---
 
-## Two-step approach
+## Interface Contract
 
-### Step 1: Reglas hardcodeadas (Preferred)
+**Ver contratos completos en**: [0-pipeline-interfaces.md](0-pipeline-interfaces.md)
 
-Si hay una regla con regex que hace match, usar eso.
-
-```javascript
-const RULES = [
-  { pattern: /STARBUCKS.*#\d+/, normalized: 'Starbucks' }
-];
-
-// Match! → "Starbucks"
+**Input**:
+```typescript
+interface NormalizationInput {
+  transactions: Transaction[];          // From 1-table (transactions table)
+  clusterMap: Map<string, string>;      // Optional - from clustering stage
+  config: {
+    useRules: boolean;                  // Load from normalization_rules table?
+    useClusters: boolean;               // Use cluster hints?
+    fallbackToOriginal: boolean;        // Keep original if no match?
+  };
+}
 ```
 
-### Step 2: Fallback a cluster (Si no hay regla)
+**Output**:
+```typescript
+interface NormalizationOutput {
+  updates: NormalizationUpdate[];
+  stats: {
+    rulesMatched: number;
+    clusterMatched: number;
+    unchanged: number;
+  };
+}
 
-Tomar el string más corto del cluster y limpiarlo.
-
-```javascript
-// Cluster members:
-// - "STARBUCKS STORE #12345"
-// - "STARBUCKS #11111"
-// - "STARBUCKS STORE #67890"
-
-// Shortest: "STARBUCKS #11111"
-// Clean: "Starbucks"
+interface NormalizationUpdate {
+  transactionId: string;
+  oldMerchant: string;
+  newMerchant: string;
+  confidence: number;                   // 0.0-1.0
+  method: 'rule' | 'cluster' | 'unchanged';
+  ruleId?: string;
+}
 ```
+
+**Side effects**: Updates `transactions.merchant` and `transactions.merchant_confidence`
+
+**Can I skip?**: NO (but can disable rules/clusters via config)
+
+**Can I swap?**: YES - Replace with LLM normalization, manual review, etc.
 
 ---
 
-## Code: Normalization
+## Architecture: DB-Driven Rules
+
+### ❌ OLD (Hardcoded - BLOB)
 
 ```javascript
-// main/pipeline/normalize.js
-
+// BAD: Hardcoded array
 const NORMALIZATION_RULES = [
-  // Coffee
   { pattern: /STARBUCKS.*#?\d+/, normalized: 'Starbucks' },
   { pattern: /DUNKIN.*DONUTS?/, normalized: 'Dunkin' },
-  { pattern: /PEET'?S COFFEE/, normalized: "Peet's Coffee" },
-
-  // E-commerce
-  { pattern: /AMAZON\.COM\*[A-Z0-9]+/, normalized: 'Amazon' },
-  { pattern: /AMZN\.COM/, normalized: 'Amazon' },
-  { pattern: /EBAY/, normalized: 'eBay' },
-
-  // Rideshare
-  { pattern: /UBER \*TRIP/, normalized: 'Uber' },
-  { pattern: /UBER \*EATS/, normalized: 'Uber Eats' },
-  { pattern: /LYFT \*RIDE/, normalized: 'Lyft' },
-
-  // Streaming
-  { pattern: /NETFLIX/, normalized: 'Netflix' },
-  { pattern: /SPOTIFY/, normalized: 'Spotify' },
-  { pattern: /DISNEY\+/, normalized: 'Disney+' },
-  { pattern: /HBO MAX/, normalized: 'HBO Max' },
-
-  // Gas
-  { pattern: /SHELL.*\d{5}/, normalized: 'Shell' },
-  { pattern: /CHEVRON.*\d{5}/, normalized: 'Chevron' },
-  { pattern: /EXXON.*\d{5}/, normalized: 'Exxon' },
-  { pattern: /PEMEX.*\d{4}/, normalized: 'Pemex' },
-
-  // Grocery
-  { pattern: /COSTCO.*\d{4}/, normalized: 'Costco' },
-  { pattern: /TARGET.*T-?\d+/, normalized: 'Target' },
-  { pattern: /WALMART.*\d{4}/, normalized: 'Walmart' },
-  { pattern: /WHOLE FOODS/, normalized: 'Whole Foods' },
-  { pattern: /TRADER JOE'?S/, normalized: "Trader Joe's" },
-
-  // Food delivery
-  { pattern: /DOORDASH/, normalized: 'DoorDash' },
-  { pattern: /GRUBHUB/, normalized: 'GrubHub' },
-  { pattern: /POSTMATES/, normalized: 'Postmates' },
-
-  // Utilities (US)
-  { pattern: /SCE PAYMENT/, normalized: 'Southern California Edison' },
-  { pattern: /AT&T/, normalized: 'AT&T' },
-  { pattern: /VERIZON/, normalized: 'Verizon' },
-  { pattern: /COMCAST/, normalized: 'Comcast' },
-
-  // Utilities (Mexico)
-  { pattern: /CFE\s*RECIBO/, normalized: 'CFE (Electricidad)' },
-  { pattern: /TELMEX/, normalized: 'Telmex' },
-
-  // Convenience stores (Mexico)
-  { pattern: /OXXO.*\d{4}/, normalized: 'Oxxo' },
-  { pattern: /7\s*ELEVEN.*\d{4}/, normalized: '7-Eleven' },
-
-  // ... más reglas (expandir a ~50 durante desarrollo)
+  // ... 50+ rules hardcoded in code
 ];
 
-function normalizeMerchant(description, clusterId, clusters) {
+// Problem: Adding Starbucks rule = code change + redeploy
+```
+
+### ✅ NEW (DB-Driven - LEGO)
+
+```javascript
+// GOOD: Load from database
+async function loadNormalizationRules() {
+  return await db.all(`
+    SELECT id, pattern, normalized_merchant, priority, category_hint
+    FROM normalization_rules
+    WHERE is_active = TRUE
+    ORDER BY priority DESC
+  `);
+}
+
+// Benefit: Adding Starbucks rule = INSERT query (no code change)
+```
+
+---
+
+## normalization_rules Table
+
+**Schema** (ver [ARCHITECTURE-COMPLETE.md](../01-foundation/ARCHITECTURE-COMPLETE.md)):
+
+```sql
+CREATE TABLE normalization_rules (
+  id TEXT PRIMARY KEY,
+
+  -- Matching
+  rule_type TEXT NOT NULL,             -- 'regex' | 'exact' | 'contains'
+  pattern TEXT NOT NULL,               -- "STARBUCKS.*#?\d+" or "STARBUCKS"
+
+  -- Output
+  normalized_merchant TEXT NOT NULL,   -- "Starbucks"
+  category_hint TEXT,                  -- "Food & Drink" (optional)
+
+  -- Control
+  priority INTEGER DEFAULT 0,          -- Higher priority runs first
+  is_active BOOLEAN DEFAULT TRUE,      -- Can disable without deleting
+
+  -- Metadata
+  created_by TEXT,                     -- 'system' | 'user'
+  usage_count INTEGER DEFAULT 0,       -- How many times used
+
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX idx_normalization_priority ON normalization_rules(priority DESC);
+CREATE INDEX idx_normalization_active ON normalization_rules(is_active);
+```
+
+---
+
+## Adding Rules (No Code Changes)
+
+### Via SQL
+
+```sql
+-- Add new rule for Starbucks
+INSERT INTO normalization_rules (
+  id, rule_type, pattern, normalized_merchant, priority, is_active
+) VALUES (
+  'rule_starbucks',
+  'regex',
+  'STARBUCKS.*#?\d+',
+  'Starbucks',
+  100,
+  TRUE
+);
+
+-- Add exact match rule
+INSERT INTO normalization_rules (
+  id, rule_type, pattern, normalized_merchant, category_hint, priority
+) VALUES (
+  'rule_netflix',
+  'contains',
+  'NETFLIX',
+  'Netflix',
+  'Entertainment',
+  90
+);
+```
+
+### Via UI (Future)
+
+```
+Dashboard > Settings > Normalization Rules > Add Rule
+
+┌──────────────────────────────────────┐
+│ Add Normalization Rule               │
+├──────────────────────────────────────┤
+│ Pattern: STARBUCKS.*#?\d+            │
+│ Type: [ Regex ▼ ]                    │
+│ Normalized: Starbucks                │
+│ Category Hint: Food & Drink          │
+│ Priority: 100                        │
+│                                      │
+│   [Cancel]  [Save Rule]              │
+└──────────────────────────────────────┘
+```
+
+**Benefit**: Business users can add rules without touching code.
+
+---
+
+## Two-Step Normalization Algorithm
+
+### Step 1: Rule Matching (Priority)
+
+```javascript
+async function normalizeWithRules(description, rules) {
   const desc = description.toUpperCase().trim();
 
-  // Step 1: Buscar regla
-  for (const rule of NORMALIZATION_RULES) {
-    if (rule.pattern.test(desc)) {
-      return rule.normalized;
+  // Try rules in priority order
+  for (const rule of rules) {
+    const matched = matchRule(desc, rule);
+
+    if (matched) {
+      // Update usage count (analytics)
+      await db.run(
+        'UPDATE normalization_rules SET usage_count = usage_count + 1 WHERE id = ?',
+        rule.id
+      );
+
+      return {
+        merchant: rule.normalized_merchant,
+        confidence: 1.0,
+        method: 'rule',
+        ruleId: rule.id,
+        categoryHint: rule.category_hint
+      };
     }
   }
 
-  // Step 2: Fallback a cluster
-  return normalizeFromCluster(description, clusterId, clusters);
+  return null; // No rule matched
 }
 
-function normalizeFromCluster(description, clusterId, clusters) {
-  // Obtener miembros del cluster
-  const members = clusters[clusterId];
+function matchRule(description, rule) {
+  switch (rule.rule_type) {
+    case 'regex':
+      const regex = new RegExp(rule.pattern, 'i');
+      return regex.test(description);
 
-  if (!members || members.length === 0) {
-    // Cluster vacío (raro), usar description raw limpio
-    return cleanString(description);
+    case 'exact':
+      return description === rule.pattern.toUpperCase();
+
+    case 'contains':
+      return description.includes(rule.pattern.toUpperCase());
+
+    default:
+      return false;
+  }
+}
+```
+
+### Step 2: Cluster Fallback (If No Rule)
+
+```javascript
+function normalizeFromCluster(description, clusterId, clusters) {
+  // No cluster available
+  if (!clusterId || !clusters[clusterId]) {
+    return {
+      merchant: cleanString(description),
+      confidence: 0.5,
+      method: 'unchanged'
+    };
   }
 
-  // Tomar el más corto (suele ser el más limpio)
-  const shortest = members.reduce((a, b) => a.length < b.length ? a : b);
+  // Get cluster members
+  const members = clusters[clusterId];
 
-  // Limpiar
-  return cleanString(shortest);
+  // Use shortest string (usually cleanest)
+  const shortest = members.reduce((a, b) =>
+    a.length < b.length ? a : b
+  );
+
+  return {
+    merchant: cleanString(shortest),
+    confidence: calculateClusterConfidence(clusterId, clusters),
+    method: 'cluster'
+  };
 }
 
 function cleanString(str) {
   return str
-    .replace(/#\d+/g, '')              // Quitar #12345
-    .replace(/\*[A-Z0-9]+/g, '')       // Quitar *M89JF2K3
-    .replace(/STORE/gi, '')            // Quitar "STORE"
-    .replace(/\s+/g, ' ')              // Normalizar espacios
-    .replace(/[^a-zA-Z0-9\s']/g, '')   // Quitar símbolos raros (excepto apostrophe)
+    .replace(/#\d+/g, '')                // Remove #12345
+    .replace(/\*[A-Z0-9]+/g, '')         // Remove *M89JF2K3
+    .replace(/\bSTORE\b/gi, '')          // Remove "STORE"
+    .replace(/\s+/g, ' ')                // Normalize spaces
+    .replace(/[^a-zA-Z0-9\s'&-]/g, '')   // Keep apostrophes, ampersands, hyphens
     .trim()
     .split(' ')
     .map(word => {
-      // Title case
+      // Title case (except numbers)
+      if (/^\d+$/.test(word)) return word;
       return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
     })
     .join(' ');
 }
-
-module.exports = { normalizeMerchant };
 ```
 
 ---
 
-## Ejemplo paso a paso
-
-### Ejemplo 1: Con regla
+## Complete Normalization Function (LEGO)
 
 ```javascript
-const description = "STARBUCKS STORE #12345 SANTA MONICA CA";
-const clusterId = "cluster_abc";
+// lib/normalization/normalize.js
 
-// Step 1: Buscar regla
-for (const rule of NORMALIZATION_RULES) {
-  if (rule.pattern.test(description)) {
-    // MATCH: /STARBUCKS.*#?\d+/
-    return rule.normalized; // "Starbucks"
+async function normalizeTransactions(input) {
+  const { transactions, clusterMap, config } = input;
+  const updates = [];
+  const stats = { rulesMatched: 0, clusterMatched: 0, unchanged: 0 };
+
+  // Load rules from DB (NOT hardcoded)
+  const rules = config.useRules
+    ? await loadNormalizationRules()
+    : [];
+
+  for (const txn of transactions) {
+    let result = null;
+
+    // Step 1: Try rule matching
+    if (config.useRules) {
+      result = await normalizeWithRules(txn.original_description, rules);
+      if (result) stats.rulesMatched++;
+    }
+
+    // Step 2: Fallback to cluster
+    if (!result && config.useClusters) {
+      const clusterId = clusterMap.get(txn.id);
+      result = normalizeFromCluster(txn.original_description, clusterId, clusters);
+      if (result.method === 'cluster') stats.clusterMatched++;
+    }
+
+    // Step 3: Fallback to original
+    if (!result) {
+      result = {
+        merchant: config.fallbackToOriginal
+          ? cleanString(txn.original_description)
+          : txn.original_description,
+        confidence: 0.5,
+        method: 'unchanged'
+      };
+      stats.unchanged++;
+    }
+
+    // Update transaction in DB
+    await db.run(`
+      UPDATE transactions
+      SET merchant = ?, merchant_confidence = ?, updated_at = ?
+      WHERE id = ?
+    `, result.merchant, result.confidence, new Date().toISOString(), txn.id);
+
+    updates.push({
+      transactionId: txn.id,
+      oldMerchant: txn.merchant,
+      newMerchant: result.merchant,
+      confidence: result.confidence,
+      method: result.method,
+      ruleId: result.ruleId
+    });
   }
+
+  return { updates, stats };
 }
-```
 
-**Output**: `"Starbucks"` ✓
+module.exports = { normalizeTransactions };
+```
 
 ---
 
-### Ejemplo 2: Sin regla (usar cluster)
+## Confidence Scoring
 
 ```javascript
-const description = "RANDOM COFFEE SHOP #456";
-const clusterId = "cluster_xyz";
-const clusters = {
-  cluster_xyz: [
-    "RANDOM COFFEE SHOP #456",
-    "RANDOM COFFEE SHOP #789",
-    "RANDOM COFFEE #111"
-  ]
-};
-
-// Step 1: No hay regla → fallback
-
-// Step 2: Cluster
-const members = clusters[clusterId];
-const shortest = "RANDOM COFFEE #111"; // Más corto
-
-// Clean
-cleanString("RANDOM COFFEE #111")
-  → "RANDOM COFFEE" (quita #111)
-  → "Random Coffee" (title case)
-```
-
-**Output**: `"Random Coffee"` ✓
-
----
-
-## Confidence score
-
-Calculamos un score (0.0-1.0) para indicar qué tan segura es la normalización.
-
-```javascript
-function calculateConfidence(observation, normalizedMerchant, clusterId, clusters) {
+function calculateConfidence(transaction, result, clusterId, clusters) {
   let confidence = 0.0;
 
-  // Factor 1: ¿Matched con regla? (+50%)
-  const matchedRule = NORMALIZATION_RULES.find(r =>
-    r.pattern.test(observation.description)
-  );
-  if (matchedRule) {
+  // Factor 1: Matched rule? (+50%)
+  if (result.method === 'rule') {
     confidence += 0.5;
   }
 
-  // Factor 2: Tamaño del cluster (+30%)
-  const clusterSize = clusters[clusterId]?.length || 1;
-  if (clusterSize >= 5) {
-    confidence += 0.3;
-  } else if (clusterSize >= 3) {
-    confidence += 0.2;
-  } else {
-    confidence += 0.1;
+  // Factor 2: Cluster size (+30%)
+  if (clusterId && clusters[clusterId]) {
+    const clusterSize = clusters[clusterId].length;
+    if (clusterSize >= 5) {
+      confidence += 0.3;
+    } else if (clusterSize >= 3) {
+      confidence += 0.2;
+    } else {
+      confidence += 0.1;
+    }
   }
 
-  // Factor 3: Similarity promedio del cluster (+20%)
-  const avgSimilarity = calculateAverageClusterSimilarity(clusterId, clusters);
-  if (avgSimilarity >= 0.9) {
-    confidence += 0.2;
-  } else if (avgSimilarity >= 0.8) {
-    confidence += 0.1;
+  // Factor 3: Cluster similarity (+20%)
+  if (clusterId && clusters[clusterId]) {
+    const avgSimilarity = calculateAverageClusterSimilarity(
+      clusterId,
+      clusters
+    );
+    if (avgSimilarity >= 0.9) {
+      confidence += 0.2;
+    } else if (avgSimilarity >= 0.8) {
+      confidence += 0.1;
+    }
   }
 
   return Math.min(confidence, 1.0);
 }
+```
 
-function calculateAverageClusterSimilarity(clusterId, clusters) {
-  const members = clusters[clusterId];
-  if (!members || members.length < 2) return 1.0;
+---
 
-  const representative = members[0];
-  let totalSimilarity = 0;
+## Example: End-to-End
 
-  for (let i = 1; i < members.length; i++) {
-    const sim = stringSimilarity.compareTwoStrings(representative, members[i]);
-    totalSimilarity += sim;
+### Scenario: New Starbucks transaction
+
+**Input**:
+```javascript
+const transaction = {
+  id: 'txn_123',
+  original_description: 'STARBUCKS STORE #12345 SANTA MONICA CA',
+  merchant: null  // Not normalized yet
+};
+```
+
+**Step 1: Load rules from DB**
+```sql
+SELECT * FROM normalization_rules WHERE is_active = TRUE;
+
+-- Result:
+[
+  {
+    id: 'rule_starbucks',
+    pattern: 'STARBUCKS.*#?\d+',
+    normalized_merchant: 'Starbucks',
+    priority: 100
+  },
+  ...
+]
+```
+
+**Step 2: Match rule**
+```javascript
+const matched = /STARBUCKS.*#?\d+/i.test('STARBUCKS STORE #12345...');
+// matched = true
+
+const result = {
+  merchant: 'Starbucks',
+  confidence: 1.0,
+  method: 'rule',
+  ruleId: 'rule_starbucks'
+};
+```
+
+**Step 3: Update transaction**
+```sql
+UPDATE transactions
+SET merchant = 'Starbucks', merchant_confidence = 1.0
+WHERE id = 'txn_123';
+```
+
+**Output**:
+```javascript
+{
+  transactionId: 'txn_123',
+  oldMerchant: null,
+  newMerchant: 'Starbucks',
+  confidence: 1.0,
+  method: 'rule'
+}
+```
+
+---
+
+## Seeding Initial Rules
+
+**File**: `scripts/seed-normalization-rules.js`
+
+```javascript
+const INITIAL_RULES = [
+  // Coffee
+  { pattern: 'STARBUCKS.*#?\\d+', normalized: 'Starbucks', priority: 100 },
+  { pattern: 'DUNKIN.*DONUTS?', normalized: 'Dunkin', priority: 100 },
+  { pattern: 'PEET\'?S COFFEE', normalized: "Peet's Coffee", priority: 100 },
+
+  // E-commerce
+  { pattern: 'AMAZON\\.COM\\*[A-Z0-9]+', normalized: 'Amazon', priority: 90 },
+  { pattern: 'AMZN\\.COM', normalized: 'Amazon', priority: 90 },
+  { pattern: 'EBAY', normalized: 'eBay', priority: 90 },
+
+  // Rideshare
+  { pattern: 'UBER \\*TRIP', normalized: 'Uber', priority: 85 },
+  { pattern: 'UBER \\*EATS', normalized: 'Uber Eats', priority: 85 },
+  { pattern: 'LYFT \\*RIDE', normalized: 'Lyft', priority: 85 },
+
+  // Streaming
+  { pattern: 'NETFLIX', normalized: 'Netflix', priority: 80 },
+  { pattern: 'SPOTIFY', normalized: 'Spotify', priority: 80 },
+  { pattern: 'DISNEY\\+', normalized: 'Disney+', priority: 80 },
+
+  // Gas stations
+  { pattern: 'SHELL.*\\d{5}', normalized: 'Shell', priority: 75 },
+  { pattern: 'CHEVRON.*\\d{5}', normalized: 'Chevron', priority: 75 },
+  { pattern: 'PEMEX.*\\d{4}', normalized: 'Pemex', priority: 75 },
+
+  // Grocery
+  { pattern: 'COSTCO.*\\d{4}', normalized: 'Costco', priority: 70 },
+  { pattern: 'TARGET.*T-?\\d+', normalized: 'Target', priority: 70 },
+  { pattern: 'WALMART.*\\d{4}', normalized: 'Walmart', priority: 70 },
+  { pattern: 'WHOLE FOODS', normalized: 'Whole Foods', priority: 70 },
+  { pattern: 'TRADER JOE\'?S', normalized: "Trader Joe's", priority: 70 },
+
+  // Food delivery
+  { pattern: 'DOORDASH', normalized: 'DoorDash', priority: 65 },
+  { pattern: 'GRUBHUB', normalized: 'GrubHub', priority: 65 },
+  { pattern: 'POSTMATES', normalized: 'Postmates', priority: 65 },
+
+  // Utilities (US)
+  { pattern: 'AT&T', normalized: 'AT&T', priority: 60 },
+  { pattern: 'VERIZON', normalized: 'Verizon', priority: 60 },
+  { pattern: 'COMCAST', normalized: 'Comcast', priority: 60 },
+
+  // Utilities (Mexico)
+  { pattern: 'CFE\\s*RECIBO', normalized: 'CFE (Electricidad)', priority: 60 },
+  { pattern: 'TELMEX', normalized: 'Telmex', priority: 60 },
+
+  // Convenience (Mexico)
+  { pattern: 'OXXO.*\\d{4}', normalized: 'Oxxo', priority: 55 },
+  { pattern: '7\\s*ELEVEN.*\\d{4}', normalized: '7-Eleven', priority: 55 },
+];
+
+async function seedRules(db) {
+  for (const rule of INITIAL_RULES) {
+    await db.run(`
+      INSERT INTO normalization_rules (
+        id, rule_type, pattern, normalized_merchant, priority, is_active, created_by
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `,
+      generateId(),
+      'regex',
+      rule.pattern,
+      rule.normalized,
+      rule.priority,
+      true,
+      'system'
+    );
   }
 
-  return totalSimilarity / (members.length - 1);
+  console.log(`✓ Seeded ${INITIAL_RULES.length} normalization rules`);
 }
 ```
 
----
+**Run**: `node scripts/seed-normalization-rules.js`
 
-## Ejemplos de confidence
-
-### Alto confidence (1.0)
-
-```
-Description: "STARBUCKS STORE #12345"
-Matched rule: ✓ (+0.5)
-Cluster size: 15 members ✓ (+0.3)
-Avg similarity: 0.92 ✓ (+0.2)
-
-Confidence: 1.0 (100%)
-```
-
-### Medio confidence (0.6)
-
-```
-Description: "LOCAL CAFE #123"
-Matched rule: ✗ (+0.0)
-Cluster size: 3 members (+0.2)
-Avg similarity: 0.85 (+0.1)
-
-Confidence: 0.3 (30%)
-```
-
-**Fix**: Agregar regla para "LOCAL CAFE".
-
-### Bajo confidence (0.1)
-
-```
-Description: "UNKNOWN MERCHANT XYZ"
-Matched rule: ✗ (+0.0)
-Cluster size: 1 member (+0.1)
-Avg similarity: N/A (+0.0)
-
-Confidence: 0.1 (10%)
-```
-
-**Acción**: Revisar manualmente (future feature).
+**Benefit**: Start with 25 common rules, add more via UI/SQL as needed.
 
 ---
 
-## Expandir reglas
+## Expanding Rules (Analytics-Driven)
 
-**Phase 1**: Empezar con ~20 reglas comunes.
+### Find merchants with low confidence
 
-**Durante desarrollo**: Agregar más reglas al ver merchants reales.
-
-```javascript
-// Ver merchants con bajo confidence
-SELECT merchant, COUNT(*) as count, AVG(confidence) as avg_conf
+```sql
+SELECT merchant, COUNT(*) as txn_count, AVG(merchant_confidence) as avg_conf
 FROM transactions
+WHERE merchant_confidence < 0.7
 GROUP BY merchant
-HAVING avg_conf < 0.5
-ORDER BY count DESC
+HAVING txn_count >= 5
+ORDER BY txn_count DESC
 LIMIT 20;
-
-// Output:
-// - "Random Local Cafe" (78 txns, conf: 0.3)
-// - "Some Gas Station" (45 txns, conf: 0.2)
-// ...
-
-// Agregar reglas para estos
-NORMALIZATION_RULES.push(
-  { pattern: /RANDOM LOCAL CAFE/, normalized: 'Random Local Cafe' },
-  { pattern: /SOME GAS STATION/, normalized: 'Some Gas Station' }
-);
-
-// Regenerar canonical
-regenerateCanonical();
 ```
 
-**Objetivo**: Llegar a ~50 reglas que cubran el 80% de las transacciones.
+**Output**:
+```
+| merchant              | txn_count | avg_conf |
+|----------------------|-----------|----------|
+| Random Local Cafe    | 78        | 0.3      |
+| Some Gas Station #4  | 45        | 0.2      |
+| Unknown Store        | 32        | 0.5      |
+```
+
+### Add rules for top merchants
+
+```sql
+INSERT INTO normalization_rules (id, rule_type, pattern, normalized_merchant, priority)
+VALUES
+  ('rule_random_cafe', 'contains', 'RANDOM LOCAL CAFE', 'Random Local Cafe', 50),
+  ('rule_gas_station', 'regex', 'SOME GAS STATION #\\d+', 'Some Gas Station', 50);
+```
+
+### Re-run normalization
+
+```javascript
+// Re-normalize all transactions with low confidence
+const lowConfTxns = await db.all(`
+  SELECT * FROM transactions WHERE merchant_confidence < 0.7
+`);
+
+await normalizeTransactions({
+  transactions: lowConfTxns,
+  clusterMap: new Map(),
+  config: { useRules: true, useClusters: false, fallbackToOriginal: true }
+});
+```
+
+**Result**: Confidence improved from 0.3 → 1.0 for 78 transactions
 
 ---
 
-## Testing normalization
+## Configuration Options
 
-### Test 1: Con regla
-
-```javascript
-const desc = "STARBUCKS STORE #12345";
-const result = normalizeMerchant(desc, null, {});
-
-expect(result).toBe('Starbucks');
-```
-
-### Test 2: Sin regla (cluster)
+### Enable/Disable Rules
 
 ```javascript
-const desc = "RANDOM COFFEE #123";
-const clusterId = "cluster_1";
-const clusters = {
-  cluster_1: ["RANDOM COFFEE #123", "RANDOM COFFEE #456"]
+const config = {
+  useRules: true,          // Load from normalization_rules table
+  useClusters: false,      // Skip clustering hints
+  fallbackToOriginal: true // Keep original if no match
 };
-
-const result = normalizeMerchant(desc, clusterId, clusters);
-
-expect(result).toBe('Random Coffee');
 ```
 
-### Test 3: Confidence
+### Disable Specific Rule
 
-```javascript
-const obs = {
-  description: "STARBUCKS STORE #12345"
-};
-const merchant = "Starbucks";
-const clusterId = "cluster_1";
-const clusters = {
-  cluster_1: [
-    "STARBUCKS STORE #12345",
-    "STARBUCKS STORE #67890",
-    "STARBUCKS #11111"
-  ]
-};
+```sql
+-- Temporarily disable Starbucks rule
+UPDATE normalization_rules SET is_active = FALSE WHERE id = 'rule_starbucks';
+```
 
-const confidence = calculateConfidence(obs, merchant, clusterId, clusters);
+### Change Rule Priority
 
-expect(confidence).toBeGreaterThan(0.8); // High confidence
+```sql
+-- Make Amazon rule run first
+UPDATE normalization_rules SET priority = 200 WHERE id = 'rule_amazon';
 ```
 
 ---
 
-## Edge cases
+## Testing
 
-### Edge case 1: Apostrophes
-
-```
-"TRADER JOE'S" → "Trader Joe's"  ✓
-"TRADER JOES"  → "Trader Joes"   ✗
-```
-
-**Solución**: Preservar apostrophes en `cleanString()`.
+### Unit Test: Rule Matching
 
 ```javascript
-.replace(/[^a-zA-Z0-9\s']/g, '') // Keep apostrophe
-```
-
----
-
-### Edge case 2: Ampersands
-
-```
-"AT&T" → "At&t"  ✗ (title case lo rompe)
-```
-
-**Solución**: Regla especial.
-
-```javascript
-{ pattern: /AT&T/, normalized: 'AT&T' } // Preserve exact
-```
-
----
-
-### Edge case 3: Números en merchant name
-
-```
-"7 ELEVEN" → "7 Eleven"  ✓
-"7-ELEVEN" → "7-Eleven"  ✓
-```
-
-**Solución**: Preservar números.
-
-```javascript
-.replace(/[^a-zA-Z0-9\s'-]/g, '') // Keep numbers and hyphens
-```
-
----
-
-## Integration con pipeline
-
-```javascript
-// main/pipeline/index.js
-
-async function runPipeline() {
-  // Stage 1: Observations ✓
-  // Stage 2: Clustering ✓
-  const { clusters, clusterMap } = clusterMerchants(observations);
-
-  // Stage 3: Normalization
-  observations.forEach(obs => {
-    const clusterId = clusterMap[obs.id];
-    const merchant = normalizeMerchant(obs.description, clusterId, clusters);
-    const confidence = calculateConfidence(obs, merchant, clusterId, clusters);
-
-    // Stage 4: Create canonical (next)
-    createCanonicalTransaction({
-      observation_id: obs.id,
-      merchant,
-      confidence,
-      ...
-    });
+describe('Normalization - DB Rules', () => {
+  beforeEach(async () => {
+    await db.run(`
+      INSERT INTO normalization_rules (id, pattern, normalized_merchant, rule_type)
+      VALUES ('test_rule', 'STARBUCKS.*', 'Starbucks', 'regex')
+    `);
   });
+
+  it('should match rule from DB', async () => {
+    const txns = [
+      { id: '1', original_description: 'STARBUCKS STORE #1234' }
+    ];
+
+    const result = await normalizeTransactions({
+      transactions: txns,
+      clusterMap: new Map(),
+      config: { useRules: true, useClusters: false }
+    });
+
+    expect(result.updates[0].newMerchant).toBe('Starbucks');
+    expect(result.updates[0].method).toBe('rule');
+    expect(result.stats.rulesMatched).toBe(1);
+  });
+
+  it('should work without rules (fallback)', async () => {
+    const txns = [
+      { id: '1', original_description: 'UNKNOWN MERCHANT' }
+    ];
+
+    const result = await normalizeTransactions({
+      transactions: txns,
+      clusterMap: new Map(),
+      config: { useRules: false, useClusters: false, fallbackToOriginal: true }
+    });
+
+    expect(result.updates[0].newMerchant).toBe('Unknown Merchant');
+    expect(result.updates[0].method).toBe('unchanged');
+  });
+});
+```
+
+### Integration Test: Adding Rule via SQL
+
+```javascript
+it('should use newly added rule immediately', async () => {
+  // Add rule via SQL (simulating UI action)
+  await db.run(`
+    INSERT INTO normalization_rules (id, pattern, normalized_merchant, rule_type, priority)
+    VALUES ('new_rule', 'ACME.*', 'Acme Corp', 'regex', 100)
+  `);
+
+  // Run normalization
+  const txns = [{ id: '1', original_description: 'ACME STORE #123' }];
+  const result = await normalizeTransactions({
+    transactions: txns,
+    clusterMap: new Map(),
+    config: { useRules: true }
+  });
+
+  // Should use new rule
+  expect(result.updates[0].newMerchant).toBe('Acme Corp');
+  expect(result.updates[0].ruleId).toBe('new_rule');
+});
+```
+
+---
+
+## Edge Cases
+
+### Apostrophes & Special Characters
+
+```javascript
+// Preserve apostrophes
+"TRADER JOE'S" → "Trader Joe's" ✓
+
+// Preserve ampersands
+"AT&T" → "AT&T" ✓ (via exact rule)
+
+// Preserve hyphens
+"7-ELEVEN" → "7-Eleven" ✓
+```
+
+**Solution**: Update `cleanString()` to preserve `'`, `&`, `-`
+
+### Multiple Rules Match
+
+```javascript
+// Rule 1: "AMAZON.*" → "Amazon"
+// Rule 2: "AMAZON\.COM\*" → "Amazon.com"
+
+// Description: "AMAZON.COM*M89JF2K3"
+// Both match!
+
+// Solution: Use PRIORITY (higher priority wins)
+```
+
+### Rule Type: exact vs contains vs regex
+
+```sql
+-- Exact match (fastest)
+{ rule_type: 'exact', pattern: 'NETFLIX' }
+
+-- Contains (case-insensitive)
+{ rule_type: 'contains', pattern: 'STARBUCKS' }
+
+-- Regex (most flexible)
+{ rule_type: 'regex', pattern: 'STARBUCKS.*#?\d+' }
+```
+
+---
+
+## Integration with Pipeline
+
+```javascript
+// lib/pipeline/index.js
+
+async function runPipeline(file, accountId) {
+  // Stage 0: Parse PDF
+  const transactions = await parsePDF(file, accountId);
+
+  // Stage 1: Clustering (optional)
+  let clusterMap = new Map();
+  if (config.stages.clustering.enabled) {
+    const result = await clusterMerchants(transactions);
+    clusterMap = result.clusterMap;
+  }
+
+  // Stage 2: Normalization (THIS STAGE)
+  const normalizationResult = await normalizeTransactions({
+    transactions,
+    clusterMap,
+    config: {
+      useRules: true,
+      useClusters: config.stages.clustering.enabled,
+      fallbackToOriginal: true
+    }
+  });
+
+  console.log(`Normalized ${normalizationResult.stats.rulesMatched} via rules`);
+
+  // Stage 3: Transfer linking (next)
+  // ...
 }
 ```
 
 ---
 
-## LOC estimate
+## LOC Estimate
 
-- `normalizeMerchant()`: ~20 LOC
-- `normalizeFromCluster()`: ~15 LOC
+- `normalizeTransactions()`: ~40 LOC
+- `normalizeWithRules()`: ~25 LOC
+- `normalizeFromCluster()`: ~20 LOC
 - `cleanString()`: ~15 LOC
 - `calculateConfidence()`: ~30 LOC
-- `NORMALIZATION_RULES`: ~50 LOC (array de reglas)
+- `loadNormalizationRules()`: ~10 LOC
+- `seedRules()`: ~60 LOC (seed script)
 
-**Total**: ~130 LOC
-
----
-
-## Resumen
-
-### Qué hace
-- Convierte descriptions raw en merchant names limpios
-- Usa reglas con regex (preferred)
-- Fallback a cluster si no hay regla
-- Calcula confidence score
-
-### Two-step approach
-1. **Reglas hardcodeadas**: Pattern matching con regex
-2. **Cluster fallback**: Tomar shortest string + clean
-
-### Confidence factors
-- Matched rule: +50%
-- Cluster size: +10-30%
-- Avg similarity: +10-20%
-
-### Output
-- Merchant normalizado (string limpio)
-- Confidence score (0.0-1.0)
-- Se usa en Stage 4 (Canonical Store)
+**Total**: ~200 LOC
 
 ---
 
-**Próximo stage**: Lee [5-canonical-store.md](5-canonical-store.md)
+## Summary: LEGO Architecture
+
+### ✅ Why This is LEGO (Not Blob)
+
+1. **Config-driven**: Rules in DB, not hardcoded array
+2. **Swappable**: Can replace rule engine with LLM normalization
+3. **Optional**: Can disable rules via config (`useRules: false`)
+4. **Extensible**: Add rules via SQL/UI (no code change)
+5. **Testable**: Each function can be unit tested independently
+6. **Clear interface**: Explicit Input/Output types (see [0-pipeline-interfaces.md](0-pipeline-interfaces.md))
+7. **Fault-tolerant**: If rule matching fails, falls back to cluster/original
+
+### 🔴 What Would Make This a Blob
+
+- ❌ Hardcoded `NORMALIZATION_RULES` array in code
+- ❌ Cannot add rules without changing code
+- ❌ Cannot disable normalization stage
+- ❌ Normalization depends on internal implementation of clustering
+
+### ✅ This Implementation Avoids All Blobs
+
+**Evidence**:
+- Rules loaded from `normalization_rules` table (line 17-25)
+- Can skip via `config.useRules = false` (line 85-86)
+- Clear interface contract (line 7-36)
+- Independent of clustering (works with empty `clusterMap`)
+
+---
+
+**Próximo stage**: [5-canonical-store.md](5-canonical-store.md) (will be rewritten for 1-table architecture)
+
+**Ver contratos**: [0-pipeline-interfaces.md](0-pipeline-interfaces.md)
