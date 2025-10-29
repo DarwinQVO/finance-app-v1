@@ -63,6 +63,53 @@ Parsea con config del banco → Inserta en timeline único
 
 ---
 
+### 1.5. 💳 Credit Card Balance Tracking
+
+**Qué hace**:
+- Trackea saldo actual de tarjetas de crédito
+- Extrae "Statement Balance" y "Due Date" de PDFs
+- Alertas de pagos próximos a vencer
+- Dashboard muestra cuánto debes en total
+
+**Ejemplo real**:
+```
+Apple Card Statement - October 2025
+Statement Balance: $500.00
+Payment Due: November 15, 2025
+
+Dashboard muestra:
+┌─────────────────────────────┐
+│ Credit Cards                │
+├─────────────────────────────┤
+│ Apple Card                  │
+│ Balance: $500.00            │
+│ Due: Nov 15 (5 days)   ⚠️   │
+└─────────────────────────────┘
+```
+
+**Cómo funciona**:
+- Parser extrae balance final del statement
+- Guarda en `accounts.balance_current`
+- Guarda due date en `accounts.payment_due_date`
+- Alertas automáticas 7 días antes del vencimiento
+
+**Tipos de cuenta soportados**:
+- `checking` - Cuenta corriente
+- `savings` - Cuenta de ahorros
+- `credit_card` - Tarjeta de crédito (trackea deuda)
+- `investment` - Cuentas de inversión
+
+**Dashboard de deudas**:
+```
+Liabilities (lo que debes):
+  Apple Card:    -$500.00 (due Nov 15)
+  Chase:       -$1,234.56 (due Nov 20)
+  ────────────────────────────────────
+  Total credit: -$1,734.56
+```
+
+---
+
 ### 2. 📄 Intelligent Document Processing
 
 **Qué hace**:
@@ -84,6 +131,91 @@ PDF → Extract text → Parse → Normalize merchant → Deduplicate → Timeli
 ```
 
 User solo ve: "PDF subido ✅ → Transacciones aparecen"
+
+---
+
+### 2.5. 📋 Invoice & Receivables Processing
+
+**Qué hace**:
+- Parsea invoices (facturas que emitiste a clientes)
+- Trackea cuentas por cobrar (receivables)
+- Linkea automáticamente cuando el cliente paga
+- Alertas de cobros vencidos
+
+**Ejemplo real - Invoice emitido**:
+```
+Invoice-2025-10-01.pdf (Cliente X)
+──────────────────────────────────
+Invoice #1234
+Bill To: Cliente X
+Amount Due: $1,200.00
+Date: October 1, 2025
+Due Date: October 14, 2025
+Status: Unpaid
+
+Finance App parsea y guarda como:
+- Type: receivable
+- Source: invoice
+- Status: pending
+```
+
+**Ejemplo real - Pago recibido**:
+```
+BofA Statement - October 15
+──────────────────────────────────
+Oct 15: Client X deposit  +$1,200.00
+
+Finance App detecta:
+✅ Invoice #1234 matched!
+✅ Status: pending → paid
+✅ Payment date: Oct 15, 2025
+```
+
+**Dashboard de receivables**:
+```
+Receivables (te deben):
+┌────────────────────────────────┐
+│ Cliente X                      │
+│ Invoice #1234                  │
+│ $1,200.00                      │
+│ Due: Oct 14 (overdue 1 day) 🔴│
+├────────────────────────────────┤
+│ Cliente Y                      │
+│ Invoice #1235                  │
+│ $500.00                        │
+│ Due: Oct 20 (5 days)      🟡   │
+└────────────────────────────────┘
+
+Total por cobrar: $1,700.00
+```
+
+**Matching automático**:
+- Compara amounts exactos
+- Compara client name en invoice vs description
+- Sugiere match si confidence > 80%
+- Usuario confirma o rechaza
+
+**Tipos de invoice soportados**:
+- PDF invoices estándar
+- Excel/CSV exports de accounting software
+- Manual entry (crear invoice desde UI)
+
+**Loan tracking** (caso especial):
+```
+Transfer manual: BofA → Juan  $400
+Tag: "Préstamo a Juan"
+Expected return: Nov 1, 2025
+
+Finance App trackea como receivable:
+- Type: loan
+- Amount: $400
+- Due: Nov 1
+- Status: pending
+
+Dashboard muestra:
+Loans Out (prestaste):
+  Juan: $400 (due Nov 1)
+```
 
 ---
 

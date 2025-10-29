@@ -50,7 +50,7 @@ CREATE TABLE transactions (
   -- ==========================================
   -- SOURCE METADATA (auditoría)
   -- ==========================================
-  source_type TEXT NOT NULL,        -- pdf | csv | manual | api | mobile
+  source_type TEXT NOT NULL,        -- pdf | csv | manual | api | mobile | invoice
   source_file TEXT,                 -- Filename si es pdf/csv
   source_hash TEXT,                 -- SHA256 para dedup
   original_description TEXT,        -- ✅ Raw del source
@@ -77,6 +77,7 @@ CREATE TABLE transactions (
   -- ==========================================
   transfer_pair_id TEXT,            -- Link a otra transaction (transfer)
   recurring_group_id TEXT,          -- Link a recurring_groups table
+  receivable_id TEXT,               -- Link a receivables table (cuando es pago de invoice)
   split_parent_id TEXT,             -- Si es parte de split transaction
 
   -- ==========================================
@@ -140,7 +141,7 @@ CREATE TABLE accounts (
 
   name TEXT NOT NULL,               -- "Bank of America Checking"
   bank TEXT NOT NULL,               -- "bofa" (ID del parser config)
-  account_type TEXT NOT NULL,       -- checking | savings | credit | investment
+  account_type TEXT NOT NULL,       -- checking | savings | credit_card | investment
 
   currency TEXT NOT NULL,           -- Default currency
   color TEXT,                       -- UI color
@@ -148,6 +149,10 @@ CREATE TABLE accounts (
 
   balance_current REAL,             -- Balance actual (opcional)
   balance_last_updated TEXT,
+
+  -- Credit Card specific fields
+  credit_limit REAL,                -- Límite de crédito (solo para credit_card)
+  payment_due_date TEXT,            -- Fecha de vencimiento del pago
 
   is_active BOOLEAN DEFAULT TRUE,
   group_name TEXT,                  -- Para agrupar (e.g., "Personal", "Business")
@@ -261,6 +266,62 @@ CREATE TABLE recurring_groups (
   updated_at TEXT NOT NULL
 );
 ```
+
+---
+
+#### `receivables` (Invoices & Loans)
+
+```sql
+CREATE TABLE receivables (
+  id TEXT PRIMARY KEY,
+  user_id TEXT,
+
+  -- Invoice/Loan info
+  invoice_number TEXT UNIQUE,       -- "INV-1234" o "LOAN-abc123"
+  client_name TEXT NOT NULL,        -- "Cliente X" o "Juan"
+  type TEXT DEFAULT 'invoice',      -- invoice | loan
+
+  -- Amounts
+  amount REAL NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'USD',
+
+  -- Dates
+  invoice_date TEXT NOT NULL,       -- Fecha de emisión
+  due_date TEXT NOT NULL,           -- Fecha de vencimiento
+  paid_date TEXT,                   -- Fecha de pago (cuando se cobra)
+
+  -- Status
+  status TEXT DEFAULT 'pending',    -- pending | paid | overdue | cancelled
+
+  -- Matching to transactions
+  matched_transaction_id TEXT,      -- FK a transactions table (cuando se cobra)
+  match_confidence REAL,            -- 0.0-1.0
+
+  -- Source
+  source_file TEXT,                 -- PDF filename del invoice
+  source_hash TEXT,                 -- SHA256 para dedup
+  notes TEXT,                       -- Notas adicionales
+
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+
+  FOREIGN KEY (matched_transaction_id) REFERENCES transactions(id)
+);
+
+CREATE INDEX idx_receivables_status ON receivables(status);
+CREATE INDEX idx_receivables_due_date ON receivables(due_date);
+CREATE INDEX idx_receivables_client ON receivables(client_name);
+CREATE INDEX idx_receivables_type ON receivables(type);
+```
+
+**Uso**:
+- **Invoices**: Facturas que emitiste a clientes
+- **Loans**: Préstamos personales que hiciste
+
+**Workflow**:
+1. Subes invoice PDF → Parser extrae datos → Crea receivable con `status: pending`
+2. Cliente paga → Entra en bank statement → Matching automático → `status: paid`
+3. Si pasa `due_date` y sigue `pending` → `status: overdue` → Alerta
 
 ---
 

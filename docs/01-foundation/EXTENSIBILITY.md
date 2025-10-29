@@ -595,7 +595,152 @@ Luego: `yarn import-rules rules.csv`
 
 ---
 
-## 9️⃣ Resumen de Extensibilidad
+## 9️⃣ Agregar Receivables/Invoices Tracking
+
+**Caso de uso**: Quieres trackear facturas que emitiste a clientes (cuentas por cobrar) o préstamos que hiciste.
+
+### Paso 1: Ya está soportado en schema
+
+La tabla `receivables` ya existe en [ARCHITECTURE-COMPLETE.md](ARCHITECTURE-COMPLETE.md):
+
+```sql
+CREATE TABLE receivables (
+  id TEXT PRIMARY KEY,
+  invoice_number TEXT UNIQUE,
+  client_name TEXT NOT NULL,
+  type TEXT DEFAULT 'invoice',      -- invoice | loan
+  amount REAL NOT NULL,
+  currency TEXT NOT NULL,
+  invoice_date TEXT NOT NULL,
+  due_date TEXT NOT NULL,
+  paid_date TEXT,
+  status TEXT DEFAULT 'pending',    -- pending | paid | overdue
+  matched_transaction_id TEXT,
+  ...
+);
+```
+
+### Paso 2: Crear invoice parser config
+
+Si tus invoices tienen formato estándar, crea config YAML:
+
+```yaml
+# configs/parsers/invoice-your-format.yaml
+id: invoice_your_format
+name: Your Invoice Format
+type: receivable
+currency: USD
+
+parsing:
+  invoice_number:
+    regex: "Invoice #:\\s*(\\d+)"
+    required: true
+
+  client:
+    regex: "Bill To:\\s*([A-Za-z0-9\\s\\.]+)"
+    multiline: true
+    required: true
+
+  amount:
+    regex: "TOTAL:\\s*\\$([\\d,]+\\.\\d{2})"
+    type: number
+    required: true
+
+  due_date:
+    regex: "Due Date:\\s*([A-Za-z]+\\s+\\d{1,2},\\s+\\d{4})"
+    format: "MMMM D, YYYY"
+    required: true
+```
+
+Ver [parser-invoices.md](../03-parsers/parser-invoices.md) para guía completa.
+
+### Paso 3: Upload invoice
+
+```javascript
+// Mismo flujo que bank PDFs
+1. User arrastra invoice PDF
+2. Sistema detecta que es invoice (no bank statement)
+3. Parsea con config
+4. Crea entry en receivables table
+5. Status: pending
+```
+
+### Paso 4: Matching automático
+
+Cuando cliente paga y aparece en bank statement:
+
+```javascript
+// Finance App detecta automáticamente
+1. Nueva transaction: +$1,200 income
+2. Busca receivables pendientes con amount = $1,200
+3. Match por client name similarity
+4. Si confidence > 80% → Link automático
+5. Status: pending → paid
+6. Guarda matched_transaction_id
+```
+
+### Paso 5: Loan tracking (caso especial)
+
+Para préstamos personales sin invoice formal:
+
+```javascript
+// Manual entry cuando haces transfer
+1. Transfer: BofA → Juan  $400
+2. UI pregunta: "¿Es un préstamo?"
+3. User selecciona: Sí
+4. Ingresa due date: Nov 1, 2025
+5. Sistema crea receivable:
+   - type: loan
+   - invoice_number: AUTO-GENERATED
+   - status: pending
+```
+
+Dashboard muestra:
+```
+Loans Out (prestaste):
+  Juan: $400 (due Nov 1, 2025)
+```
+
+### Paso 6: Overdue detection
+
+Sistema automáticamente:
+```javascript
+// Daily check
+1. Busca receivables con due_date < today AND status = pending
+2. Cambia status → overdue
+3. Crea alerta
+4. Notifica user
+```
+
+### Resultado
+
+**Sin escribir código**:
+- ✅ Parse invoices automáticamente
+- ✅ Track cuentas por cobrar
+- ✅ Link pagos automático
+- ✅ Alertas de overdue
+- ✅ Dashboard completo
+
+**Dashboard view**:
+```
+Financial Summary:
+┌──────────────────────────────────┐
+│ Assets:          $1,734.79       │
+│ Liabilities:    -$1,734.56       │
+│ Receivables:    +$2,100.00       │
+├──────────────────────────────────┤
+│ NET POSITION:    $2,100.23       │
+└──────────────────────────────────┘
+
+Receivables (te deben):
+  Cliente X: $1,200 (overdue 5 days) 🔴
+  Cliente Y: $500 (due in 10 days)   🟡
+  Juan (loan): $400 (due Nov 1)      🟢
+```
+
+---
+
+## 🔟 Resumen de Extensibilidad
 
 | Caso | Método | Cambios en Código |
 |------|--------|-------------------|
@@ -607,10 +752,11 @@ Luego: `yarn import-rules rules.csv`
 | **Nuevo report** | Create query + register | ⚠️ MÍNIMO |
 | **Nuevo budget type** | Add column + logic | ⚠️ MÍNIMO |
 | **Nueva regla normalización** | INSERT en `normalization_rules` | ❌ CERO |
+| **Receivables/Invoices tracking** | INSERT parser config + Upload invoice | ❌ CERO |
 
 ---
 
-## 🔟 Database Schema Completo
+## 1️⃣1️⃣ Database Schema Completo
 
 ```sql
 -- CORE TABLE
