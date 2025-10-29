@@ -377,6 +377,322 @@ function isDuplicate(hash) {
 
 ---
 
+## Re-upload + Edit Conflicts
+
+### Scenario: User edita transaction y luego re-sube PDF
+
+**Caso común**: Darwin edita un merchant mal normalizado y luego por error re-sube el mismo PDF.
+
+#### Step 1: User edita transaction
+
+```
+Sep 28  Trader  -$45.67  USD  →  Darwin edita → "Trader Joe's"
+```
+
+Database:
+```sql
+UPDATE transactions
+SET
+  merchant = 'Trader Joe''s',
+  is_edited = TRUE,
+  edited_fields = '["merchant"]',
+  edited_at = '2025-09-28T15:30:00Z'
+WHERE id = 'txn_abc123';
+```
+
+---
+
+#### Step 2: User re-sube `bofa_2025_09.pdf`
+
+Darwin accidentalmente arrastra el mismo PDF de nuevo.
+
+**Sistema detecta**:
+1. PDF hash = mismo hash
+2. Transactions already exist
+3. Algunas transactions tienen `is_edited = TRUE`
+
+---
+
+#### Step 3: Sistema protege edits
+
+```javascript
+// main/pipeline/extract-from-pdf.js
+
+async function extractFromPDF({ file, accountId, config }) {
+  const hash = computeHash(file.path);
+
+  // Check if already processed
+  const existingTransactions = await db.all(`
+    SELECT id, merchant, is_edited, edited_fields
+    FROM transactions
+    WHERE source_hash = ?
+  `, hash);
+
+  if (existingTransactions.length === 0) {
+    // New PDF, process normally
+    return processNewPDF(file, accountId, config);
+  }
+
+  // PDF already uploaded
+
+  // Check for edited transactions
+  const editedTransactions = existingTransactions.filter(t => t.is_edited);
+
+  if (editedTransactions.length > 0) {
+    // Show warning with edit details
+    return {
+      status: 'duplicate_with_edits',
+      reason: 'PDF already processed with manual edits',
+      metadata: {
+        totalTransactions: existingTransactions.length,
+        editedTransactions: editedTransactions.length,
+        edits: editedTransactions.map(t => ({
+          id: t.id,
+          merchant: t.merchant,
+          editedFields: JSON.parse(t.edited_fields)
+        }))
+      }
+    };
+  }
+
+  // No edits, simple duplicate
+  return {
+    status: 'duplicate',
+    reason: 'PDF already processed',
+    metadata: {
+      totalTransactions: existingTransactions.length
+    }
+  };
+}
+```
+
+---
+
+#### Step 4: UI muestra warning con detalles
+
+```
+┌──────────────────────────────────────────────────┐
+│  ⚠️ PDF Ya Procesado con Edits Manuales          │
+├──────────────────────────────────────────────────┤
+│                                                  │
+│  bofa_2025_09.pdf fue procesado previamente y    │
+│  contiene 2 transacciones editadas manualmente:  │
+│                                                  │
+│  📝 Trader → "Trader Joe's" (merchant edited)    │
+│  📝 Salary Deposit → tipo "income" (type edited) │
+│                                                  │
+│  ¿Qué quieres hacer?                             │
+│                                                  │
+│  ○ Mantener edits (recomendado)                  │
+│  ○ Sobrescribir con datos originales del PDF    │
+│                                                  │
+│  [Cancelar]  [Continuar]                         │
+│                                                  │
+└──────────────────────────────────────────────────┘
+```
+
+---
+
+#### Step 5: User selecciona opción
+
+**Opción 1: Mantener edits (recomendado)** ✅
+
+```javascript
+if (userChoice === 'keep_edits') {
+  // Do nothing, just skip upload
+  return {
+    status: 'skipped',
+    message: 'Manual edits preserved. No changes made.'
+  };
+}
+```
+
+**Resultado**: Edits se preservan. PDF no se re-procesa.
+
+---
+
+**Opción 2: Sobrescribir con original** ⚠️
+
+```javascript
+if (userChoice === 'overwrite') {
+  // Delete existing transactions
+  await db.run('DELETE FROM transactions WHERE source_hash = ?', hash);
+
+  // Re-process PDF
+  return processNewPDF(file, accountId, config);
+}
+```
+
+**Resultado**: Edits se pierden. Transactions se re-crean desde PDF.
+
+**UI Confirmation**:
+```
+┌──────────────────────────────────────────────────┐
+│  ⚠️ ¿Estás seguro?                                │
+├──────────────────────────────────────────────────┤
+│                                                  │
+│  Esto borrará 2 edits manuales:                  │
+│                                                  │
+│  • "Trader Joe's" → volverá a "Trader"          │
+│  • Tipo "income" → volverá a "expense"          │
+│                                                  │
+│  Esta acción NO se puede deshacer.              │
+│                                                  │
+│  [Cancelar]  [Sí, sobrescribir]                  │
+│                                                  │
+└──────────────────────────────────────────────────┘
+```
+
+---
+
+### Edge Cases
+
+#### 1. User edita y luego sube PDF diferente
+
+**Síntoma**: User edita transactions de `bofa_2025_09.pdf` y luego sube `bofa_2025_10.pdf`.
+
+**Resultado**: ✅ No hay conflicto. Hashes diferentes, se procesan normalmente.
+
+---
+
+#### 2. User borra transaction y re-sube PDF
+
+**Síntoma**: User borra una transaction manualmente. Luego re-sube el PDF.
+
+**Pregunta**: ¿La transaction borrada re-aparece?
+
+**Solución**: Track deletions
+
+```sql
+-- Add deleted_at field to track deletions
+ALTER TABLE transactions ADD COLUMN deleted_at TEXT;
+
+-- When user deletes
+UPDATE transactions SET deleted_at = ? WHERE id = ?;
+-- Don't actually DELETE (preserve for conflict detection)
+```
+
+**On re-upload**:
+```javascript
+const deletedTransactions = existingTransactions.filter(t => t.deleted_at);
+
+if (deletedTransactions.length > 0) {
+  // Show warning
+  return {
+    status: 'duplicate_with_deletions',
+    reason: 'PDF contains transactions you previously deleted'
+  };
+}
+```
+
+**UI**:
+```
+┌──────────────────────────────────────────────────┐
+│  ⚠️ PDF contiene transactions borradas           │
+├──────────────────────────────────────────────────┤
+│                                                  │
+│  Este PDF contiene 1 transaction que borraste:   │
+│                                                  │
+│  🗑️ Starbucks -$5.67 USD (deleted Sep 28)       │
+│                                                  │
+│  ¿Restaurar esta transaction?                   │
+│                                                  │
+│  [No, mantener borrada]  [Sí, restaurar]        │
+│                                                  │
+└──────────────────────────────────────────────────┘
+```
+
+---
+
+#### 3. PDF con partial overlap
+
+**Síntoma**: User sube PDF truncado o diferente versión.
+
+**Ejemplo**:
+- Upload 1: `bofa_2025_09.pdf` con 127 transactions
+- Upload 2: `bofa_2025_09_partial.pdf` con 50 transactions (mismo mes)
+
+**Resultado**: ✅ Different hashes, tratados como PDFs diferentes.
+
+**Posible mejora (Phase 2)**: Detectar overlap por `date + amount + description`.
+
+---
+
+### Code: Complete Re-upload Handler
+
+```javascript
+// renderer/components/UploadHandler.jsx
+
+async function handleFileUpload(file) {
+  const result = await window.electron.uploadPDF(file.path, account);
+
+  // Handle different statuses
+  switch (result.status) {
+    case 'success':
+      showSuccess(`${result.metadata.transactionsAdded} transactions added`);
+      break;
+
+    case 'duplicate':
+      showWarning('PDF already processed. No changes made.');
+      break;
+
+    case 'duplicate_with_edits':
+      showEditConflictDialog(result.metadata);
+      break;
+
+    case 'duplicate_with_deletions':
+      showDeletionConflictDialog(result.metadata);
+      break;
+
+    case 'error':
+      showError(result.reason);
+      break;
+  }
+}
+
+function showEditConflictDialog(metadata) {
+  const { editedTransactions } = metadata;
+
+  const choice = showDialog({
+    title: '⚠️ PDF Ya Procesado con Edits Manuales',
+    message: `This PDF contains ${editedTransactions.length} manually edited transactions.`,
+    details: editedTransactions.map(t =>
+      `• ${t.merchant} (${t.editedFields.join(', ')} edited)`
+    ).join('\n'),
+    options: [
+      { label: 'Keep edits (recommended)', value: 'keep', default: true },
+      { label: 'Overwrite with original', value: 'overwrite', danger: true }
+    ]
+  });
+
+  if (choice === 'overwrite') {
+    // Show confirmation
+    const confirmed = confirm(
+      'This will delete manual edits. Are you sure?'
+    );
+
+    if (confirmed) {
+      await window.electron.reprocessPDF(file.path, { overwrite: true });
+    }
+  }
+}
+```
+
+---
+
+### Summary: Re-upload Behavior
+
+| Scenario | Behavior | User Choice |
+|----------|----------|-------------|
+| **Simple duplicate** (no edits) | Skip, show warning | N/A |
+| **Duplicate + edits** | Protect edits by default | Keep / Overwrite |
+| **Duplicate + deletions** | Ask to restore | Restore / Keep deleted |
+| **Different PDF (different hash)** | Process normally | N/A |
+
+**Default behavior**: **Protect user edits** (no data loss).
+
+---
+
 ## Error handling
 
 ### Error 1: PDF corrupto

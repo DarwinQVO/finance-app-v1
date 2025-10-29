@@ -386,6 +386,282 @@ function parseDateRange(range) {
 
 ---
 
+## Multi-Currency Display
+
+### Scenario: Mixed USD/MXN transactions
+
+Darwin tiene cuentas en USA (USD) y México (MXN). El timeline muestra ambas:
+
+```
+┌──────────────────────────────────────────────────┐
+│  Sep 28, 2025                                    │
+│    🏪 Starbucks              -$5.67  USD  [BofA] │
+│    🛒 Oxxo                   -$120   MXN  [Scotia]│
+│                                                  │
+│  Sep 27, 2025                                    │
+│    📦 Amazon                 -$89.99 USD  [BofA] │
+│    🍔 Tacos El Güero         -$250   MXN  [Scotia]│
+│    💰 Salary                +$3,500  USD  [BofA] │
+│                                                  │
+│  127 transactions                                │
+│  USD: $2,456.78 spent • $3,500 income            │
+│  MXN: $4,500 spent • $0 income                   │
+└──────────────────────────────────────────────────┘
+```
+
+**Key Points**:
+- Each transaction shows its currency
+- Totals are **separated by currency** (no auto-conversion)
+- Visual clarity: amount + currency always together
+
+---
+
+### Currency Formatting
+
+```javascript
+// renderer/utils/formatCurrency.js
+
+function formatCurrency(amount, currency) {
+  const absAmount = Math.abs(amount);
+
+  const formats = {
+    'USD': { symbol: '$', decimals: 2 },
+    'MXN': { symbol: '$', decimals: 2 },
+    'EUR': { symbol: '€', decimals: 2 },
+    'GBP': { symbol: '£', decimals: 2 },
+    'CAD': { symbol: 'CA$', decimals: 2 }
+  };
+
+  const format = formats[currency] || { symbol: currency, decimals: 2 };
+
+  // Format number
+  const formatted = absAmount.toLocaleString('en-US', {
+    minimumFractionDigits: format.decimals,
+    maximumFractionDigits: format.decimals
+  });
+
+  // Add sign
+  const sign = amount < 0 ? '-' : '+';
+
+  return `${sign}${format.symbol}${formatted}`;
+}
+
+// Examples:
+formatCurrency(-5.67, 'USD')  // "-$5.67"
+formatCurrency(-120, 'MXN')   // "-$120.00"
+formatCurrency(3500, 'USD')   // "+$3,500.00"
+```
+
+**Always append currency code** to avoid confusion:
+```javascript
+// Good
+<span>{formatCurrency(amount, currency)} {currency}</span>
+// Result: "-$120.00 MXN"
+
+// Bad
+<span>{formatCurrency(amount, currency)}</span>
+// Result: "-$120.00" (ambiguous - USD or MXN?)
+```
+
+---
+
+### Totals: Separated by Currency
+
+```javascript
+// renderer/components/TimelineSummary.jsx
+
+function TimelineSummary({ transactions }) {
+  // Group by currency
+  const byCurrency = transactions.reduce((acc, txn) => {
+    if (!acc[txn.currency]) {
+      acc[txn.currency] = { spent: 0, income: 0, count: 0 };
+    }
+
+    if (txn.amount < 0) {
+      acc[txn.currency].spent += Math.abs(txn.amount);
+    } else {
+      acc[txn.currency].income += txn.amount;
+    }
+
+    acc[txn.currency].count++;
+    return acc;
+  }, {});
+
+  return (
+    <div className="timeline-summary">
+      <div className="total-transactions">
+        {transactions.length} transactions
+      </div>
+
+      {Object.entries(byCurrency).map(([currency, totals]) => (
+        <div key={currency} className="currency-total">
+          <strong>{currency}:</strong>
+          {formatCurrency(-totals.spent, currency)} {currency} spent •
+          {formatCurrency(totals.income, currency)} {currency} income
+        </div>
+      ))}
+    </div>
+  );
+}
+```
+
+**Output**:
+```
+127 transactions
+USD: -$2,456.78 USD spent • +$3,500.00 USD income
+MXN: -$4,500.00 MXN spent • +$0.00 MXN income
+```
+
+---
+
+### Transfer Between Different Currencies
+
+**Scenario**: Darwin transfiere USD → MXN (e.g., Wise)
+
+```
+┌──────────────────────────────────────────────────┐
+│  Sep 26, 2025                                    │
+│    ↔️ Transfer: Wise → Scotia                    │
+│       -$1,000.00 USD [Wise]                      │
+│       +$18,500.00 MXN [Scotia]                   │
+│       (Rate: 18.5 MXN/USD)                       │
+└──────────────────────────────────────────────────┘
+```
+
+**Transfer Linking**: Detecta transfer incluso con different currencies usando:
+- Same date (±3 days)
+- Exchange rate within 5% of market rate
+- Transfer keywords in description
+
+```javascript
+// main/pipeline/transfer-linking.js
+
+async function linkCrossCurrencyTransfers(transactions) {
+  const transfers = transactions.filter(t => t.type === 'transfer');
+
+  for (const debit of transfers.filter(t => t.amount < 0)) {
+    for (const credit of transfers.filter(t => t.amount > 0)) {
+      // Skip if same currency (already handled)
+      if (debit.currency === credit.currency) continue;
+
+      // Check date window
+      const daysDiff = Math.abs(daysBetween(debit.date, credit.date));
+      if (daysDiff > 3) continue;
+
+      // Calculate implied exchange rate
+      const impliedRate = Math.abs(credit.amount / debit.amount);
+
+      // Get market rate (from API or config)
+      const marketRate = await getExchangeRate(debit.currency, credit.currency, debit.date);
+
+      // Check if within 5% tolerance
+      const tolerance = 0.05;
+      const diff = Math.abs(impliedRate - marketRate) / marketRate;
+
+      if (diff <= tolerance) {
+        // Link transfer pair
+        await linkTransferPair(debit.id, credit.id, {
+          exchange_rate: impliedRate,
+          market_rate: marketRate
+        });
+      }
+    }
+  }
+}
+```
+
+**Database**: Store exchange rate in transfer pair
+
+```sql
+UPDATE transactions
+SET
+  transfer_pair_id = ?,
+  transfer_exchange_rate = ?  -- New field
+WHERE id IN (?, ?);
+```
+
+---
+
+### Exchange Rate Source
+
+**Phase 1**: Manual config (no API)
+
+```javascript
+// config/exchange-rates.json
+{
+  "2025-09-26": {
+    "USD_MXN": 18.50,
+    "USD_EUR": 0.92,
+    "USD_GBP": 0.79
+  }
+}
+```
+
+**Phase 2+**: Use API (exchangerate-api.com, fixer.io, etc)
+
+```javascript
+async function getExchangeRate(from, to, date) {
+  // Try API first
+  try {
+    const response = await fetch(`https://api.exchangerate.com/v4/${date}?base=${from}`);
+    const data = await response.json();
+    return data.rates[to];
+  } catch (err) {
+    // Fallback to config
+    return getConfiguredRate(from, to, date);
+  }
+}
+```
+
+---
+
+### Filter by Currency
+
+Add currency filter to timeline:
+
+```javascript
+// renderer/components/TimelineFilters.jsx
+
+<select
+  value={filters.currency}
+  onChange={(e) => onChange({ ...filters, currency: e.target.value })}
+>
+  <option value="all">All currencies</option>
+  <option value="USD">USD only</option>
+  <option value="MXN">MXN only</option>
+  <option value="EUR">EUR only</option>
+</select>
+```
+
+**SQL**:
+```sql
+SELECT * FROM transactions
+WHERE currency = 'USD'  -- If filtered
+ORDER BY date DESC;
+```
+
+---
+
+### Currency Conversion (Phase 2)
+
+**Feature**: Show converted amounts in user's preferred currency
+
+```
+┌──────────────────────────────────────────────────┐
+│  Sep 28, 2025                                    │
+│    🏪 Starbucks              -$5.67  USD         │
+│    🛒 Oxxo                   -$120   MXN         │
+│                               (≈ $6.49 USD)      │  ← Converted
+│                                                  │
+│  Totals (USD equivalent):                        │
+│  $2,456.78 spent • $3,500 income                │
+└──────────────────────────────────────────────────┘
+```
+
+**Not Phase 1** - Too complex for MVP.
+
+---
+
 ## LOC estimate
 
 - `Timeline.jsx`: ~80 LOC
