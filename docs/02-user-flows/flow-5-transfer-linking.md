@@ -602,4 +602,4 @@ Darwin puede ver todos los transfers.
 
 ---
 
-**Próximos docs**: Lee [Batch 3: Parsers](parser-bofa.md) para ver cómo parsear cada banco.
+**Próximos docs**: Lee [Batch 3: Parsers](../03-parsers/parser-bofa.md) para ver cómo parsear cada banco.

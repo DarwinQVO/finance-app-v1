@@ -2,7 +2,7 @@
 
 **Una narración de cómo Darwin usa Finance App desde el día 1 hasta su vida diaria**
 
-> **⚠️ NOTA**: Este storytelling se enfoca en las features core que se construyen primero (timeline, upload, normalization, transfers). El sistema completo incluye muchas más capacidades descritas en [SYSTEM-OVERVIEW.md](SYSTEM-OVERVIEW.md).
+> **⚠️ NOTA**: Este storytelling se enfoca en las features core que se construyen primero (timeline, upload, normalization, transfers). El sistema completo incluye muchas más capacidades descritas en [SYSTEM-OVERVIEW.md](../01-foundation/SYSTEM-OVERVIEW.md).
 
 ---
 

@@ -478,4 +478,4 @@ expect(type).toBe('transfer');
 
 ---
 
-**Próximos docs**: Lee [Batch 4: Pipeline](2-observation-store.md)
+**Próximos docs**: Lee [Batch 4: Pipeline](../04-technical-pipeline/2-observation-store.md)

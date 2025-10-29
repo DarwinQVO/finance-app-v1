@@ -1,8 +1,8 @@
 # ⚠️ LEGACY REFERENCE - Stage 1: Observation Store
 
-> **⚠️ WARNING**: Este doc usa arquitectura ANTIGUA (2 tablas). Ver [_LEGACY_WARNING.md](_LEGACY_WARNING.md)
+> **⚠️ WARNING**: Este doc usa arquitectura ANTIGUA (2 tablas). Ver [_LEGACY_WARNING.md](../99-legacy/_LEGACY_WARNING.md)
 >
-> **Arquitectura correcta**: [ARCHITECTURE-COMPLETE.md](ARCHITECTURE-COMPLETE.md) (1 tabla con campo `original_description`)
+> **Arquitectura correcta**: [ARCHITECTURE-COMPLETE.md](../01-foundation/ARCHITECTURE-COMPLETE.md) (1 tabla con campo `original_description`)
 
 ---
 

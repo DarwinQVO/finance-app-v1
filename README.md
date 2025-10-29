@@ -68,54 +68,50 @@ Finance App es una aplicación completa de finanzas personales que te permite:
 
 ## 📚 Documentación Completa
 
-### 🎯 Foundation (Lee primero)
+### 📘 01. Foundation (Lee primero)
 
 **⭐ EMPIEZA AQUÍ**:
-- **[SYSTEM-OVERVIEW.md](SYSTEM-OVERVIEW.md)** - Descripción COMPLETA del sistema (qué ES y qué HACE)
+- **[SYSTEM-OVERVIEW.md](docs/01-foundation/SYSTEM-OVERVIEW.md)** - Descripción COMPLETA del sistema (qué ES y qué HACE)
 
 **Luego lee**:
-- **[ARCHITECTURE-COMPLETE.md](ARCHITECTURE-COMPLETE.md)** - Arquitectura técnica de 1 tabla + auxiliares
-- **[ROADMAP.md](ROADMAP.md)** - Cómo CONSTRUIR esto incremental (plan de 4 fases)
-- **[EXTENSIBILITY.md](EXTENSIBILITY.md)** - Cómo EXTENDER: nueva cuenta, banco, categoría, etc.
-- **[OPERATIONS.md](OPERATIONS.md)** - Cómo OPERAR: migrations, backups, recovery, testing
-- **[SYSTEM-COMPLETE-SCOPE.md](SYSTEM-COMPLETE-SCOPE.md)** - Features organizadas por construcción (168 features)
+- **[ARCHITECTURE-COMPLETE.md](docs/01-foundation/ARCHITECTURE-COMPLETE.md)** - Arquitectura técnica de 1 tabla + auxiliares
+- **[ROADMAP.md](docs/01-foundation/ROADMAP.md)** - Cómo CONSTRUIR esto incremental (plan de 4 fases)
+- **[EXTENSIBILITY.md](docs/01-foundation/EXTENSIBILITY.md)** - Cómo EXTENDER: nueva cuenta, banco, categoría, etc.
+- **[OPERATIONS.md](docs/01-foundation/OPERATIONS.md)** - Cómo OPERAR: migrations, backups, recovery, testing
+- **[SYSTEM-COMPLETE-SCOPE.md](docs/01-foundation/SYSTEM-COMPLETE-SCOPE.md)** - Features organizadas por construcción (168 features)
 
-### 👤 User Flows (Implementación de Referencia)
-- [flow-1-timeline-continuo.md](flow-1-timeline-continuo.md) - El flujo unificado
-- [flow-2-upload-pdf.md](flow-2-upload-pdf.md) - Subir PDFs
-- [flow-3-view-transaction.md](flow-3-view-transaction.md) - Ver detalles
-- [flow-4-merchant-normalization.md](flow-4-merchant-normalization.md) - Normalización
-- [flow-5-transfer-linking.md](flow-5-transfer-linking.md) - Transfers
+### 👤 02. User Flows
+- [flow-1-timeline-continuo.md](docs/02-user-flows/flow-1-timeline-continuo.md) - El flujo unificado
+- [flow-2-upload-pdf.md](docs/02-user-flows/flow-2-upload-pdf.md) - Subir PDFs
+- [flow-3-view-transaction.md](docs/02-user-flows/flow-3-view-transaction.md) - Ver detalles
+- [flow-4-merchant-normalization.md](docs/02-user-flows/flow-4-merchant-normalization.md) - Normalización
+- [flow-5-transfer-linking.md](docs/02-user-flows/flow-5-transfer-linking.md) - Transfers
 
-### 🏦 Parsers (Config-Driven)
-- [parser-bofa.md](parser-bofa.md) - Bank of America (con config approach)
-- [parser-apple-card.md](parser-apple-card.md) - Apple Card
-- [parser-wise.md](parser-wise.md) - Wise
-- [parser-scotia.md](parser-scotia.md) - Scotiabank
+### 🏦 03. Parsers (Config-Driven)
+- [parser-bofa.md](docs/03-parsers/parser-bofa.md) - Bank of America (con config approach)
+- [parser-apple-card.md](docs/03-parsers/parser-apple-card.md) - Apple Card
+- [parser-wise.md](docs/03-parsers/parser-wise.md) - Wise
+- [parser-scotia.md](docs/03-parsers/parser-scotia.md) - Scotiabank
 
-### ⚙️ Pipeline
-- [2-observation-store.md](2-observation-store.md) - Raw data inmutable
-- [3-clustering.md](3-clustering.md) - String similarity grouping
-- [4-normalization.md](4-normalization.md) - Config-driven rules
-- [5-canonical-store.md](5-canonical-store.md) - Clean truth
+### ⚙️ 04. Technical Pipeline
+- [2-observation-store.md](docs/04-technical-pipeline/2-observation-store.md) - Raw data inmutable
+- [3-clustering.md](docs/04-technical-pipeline/3-clustering.md) - String similarity grouping
+- [4-normalization.md](docs/04-technical-pipeline/4-normalization.md) - Config-driven rules
+- [5-canonical-store.md](docs/04-technical-pipeline/5-canonical-store.md) - Clean truth
+- [6-ui-timeline.md](docs/04-technical-pipeline/6-ui-timeline.md) - Vista principal con infinite scroll
+- [7-ui-filters.md](docs/04-technical-pipeline/7-ui-filters.md) - Account, date, type filters
+- [8-ui-details.md](docs/04-technical-pipeline/8-ui-details.md) - Transaction detail panel
+- [9-upload-flow.md](docs/04-technical-pipeline/9-upload-flow.md) - Flujo completo end-to-end
+- [10-error-handling.md](docs/04-technical-pipeline/10-error-handling.md) - Error handling graceful
 
-### 🎨 UI/UX (Phase 1)
-- [6-ui-timeline.md](6-ui-timeline.md) - Vista principal con infinite scroll
-- [7-ui-filters.md](7-ui-filters.md) - Account, date, type filters
-- [8-ui-details.md](8-ui-details.md) - Transaction detail panel
+### 📊 05. Phase Features (Advanced)
+- **[CATEGORIES-BUDGETS.md](docs/05-phase-features/CATEGORIES-BUDGETS.md)** - Phase 2 features completas
+- **[REPORTS-EXPORT.md](docs/05-phase-features/REPORTS-EXPORT.md)** - Phase 3 analytics y export
+- **[MULTI-USER.md](docs/05-phase-features/MULTI-USER.md)** - Phase 4 multi-user system
+- **[MOBILE-APP.md](docs/05-phase-features/MOBILE-APP.md)** - Phase 4 React Native app
 
-### 🔧 Integration
-- [9-upload-flow.md](9-upload-flow.md) - Flujo completo end-to-end
-- [10-error-handling.md](10-error-handling.md) - Error handling graceful
-
-### 📊 Advanced Features
-- **[CATEGORIES-BUDGETS.md](CATEGORIES-BUDGETS.md)** - Phase 2 features completas
-- **[REPORTS-EXPORT.md](REPORTS-EXPORT.md)** - Phase 3 analytics y export
-- **[MULTI-USER.md](MULTI-USER.md)** - Phase 4 multi-user system
-- **[MOBILE-APP.md](MOBILE-APP.md)** - Phase 4 React Native app
-
-### 📖 Storytelling
-- [STORYTELLING.md](STORYTELLING.md) - La historia completa narrada
+### 📖 06. Storytelling
+- [STORYTELLING.md](docs/06-storytelling/STORYTELLING.md) - La historia completa narrada
 
 ---
 
@@ -187,19 +183,19 @@ Finance App es una aplicación completa de finanzas personales que te permite:
 ## 📖 Cómo Usar Esta Documentación
 
 ### Si eres Developer:
-1. Lee [ARCHITECTURE-COMPLETE.md](ARCHITECTURE-COMPLETE.md) - Entiende la arquitectura
-2. Lee [ROADMAP.md](ROADMAP.md) - Entiende el plan de construcción
+1. Lee [ARCHITECTURE-COMPLETE.md](docs/01-foundation/ARCHITECTURE-COMPLETE.md) - Entiende la arquitectura
+2. Lee [ROADMAP.md](docs/01-foundation/ROADMAP.md) - Entiende el plan de construcción
 3. Lee los docs específicos de la feature que vas a construir
 
 ### Si eres Product:
-1. Lee [SYSTEM-COMPLETE-SCOPE.md](SYSTEM-COMPLETE-SCOPE.md) - Todas las features
-2. Lee [STORYTELLING.md](STORYTELLING.md) - La experiencia del usuario
-3. Lee los User Flows para entender cada interacción
+1. Lee [SYSTEM-COMPLETE-SCOPE.md](docs/01-foundation/SYSTEM-COMPLETE-SCOPE.md) - Todas las features
+2. Lee [STORYTELLING.md](docs/06-storytelling/STORYTELLING.md) - La experiencia del usuario
+3. Lee los User Flows en `docs/02-user-flows/` para entender cada interacción
 
 ### Si eres Designer:
-1. Lee los User Flows (flow-*.md) - Entiende las interacciones
-2. Lee los UI docs (6-ui-*.md, 7-ui-*.md, 8-ui-*.md)
-3. Consulta [ARCHITECTURE-COMPLETE.md](ARCHITECTURE-COMPLETE.md) para data disponible
+1. Lee los User Flows en `docs/02-user-flows/` - Entiende las interacciones
+2. Lee los UI docs en `docs/04-technical-pipeline/` (6-ui-*.md, 7-ui-*.md, 8-ui-*.md)
+3. Consulta [ARCHITECTURE-COMPLETE.md](docs/01-foundation/ARCHITECTURE-COMPLETE.md) para data disponible
 
 ---
 

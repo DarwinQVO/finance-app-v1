@@ -16,9 +16,9 @@
 
 ## 📖 Docs correctos a usar:
 
-1. **[SYSTEM-OVERVIEW.md](SYSTEM-OVERVIEW.md)** - Qué ES el sistema completo
-2. **[ARCHITECTURE-COMPLETE.md](ARCHITECTURE-COMPLETE.md)** - Arquitectura correcta
-3. **[ROADMAP.md](ROADMAP.md)** - Cómo construir incremental
+1. **[SYSTEM-OVERVIEW.md](../01-foundation/SYSTEM-OVERVIEW.md)** - Qué ES el sistema completo
+2. **[ARCHITECTURE-COMPLETE.md](../01-foundation/ARCHITECTURE-COMPLETE.md)** - Arquitectura correcta
+3. **[ROADMAP.md](../01-foundation/ROADMAP.md)** - Cómo construir incremental
 
 ---
 
