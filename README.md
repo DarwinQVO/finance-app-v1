@@ -80,11 +80,7 @@ Finance App es una aplicación completa de finanzas personales que te permite:
 - **[OPERATIONS.md](OPERATIONS.md)** - Cómo OPERAR: migrations, backups, recovery, testing
 - **[SYSTEM-COMPLETE-SCOPE.md](SYSTEM-COMPLETE-SCOPE.md)** - Features organizadas por construcción (168 features)
 
-### 📖 Core Documentation (Phase 1)
-1. [0-scope.md](0-scope.md) - Qué está en Phase 1
-2. [1-architecture.md](1-architecture.md) - Arquitectura detallada
-
-### 👤 User Flows (⭐ Empieza aquí)
+### 👤 User Flows (Implementación de Referencia)
 - [flow-1-timeline-continuo.md](flow-1-timeline-continuo.md) - El flujo unificado
 - [flow-2-upload-pdf.md](flow-2-upload-pdf.md) - Subir PDFs
 - [flow-3-view-transaction.md](flow-3-view-transaction.md) - Ver detalles

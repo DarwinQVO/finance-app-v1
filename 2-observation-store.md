@@ -1,4 +1,10 @@
-# Stage 1: Observation Store
+# ⚠️ LEGACY REFERENCE - Stage 1: Observation Store
+
+> **⚠️ WARNING**: Este doc usa arquitectura ANTIGUA (2 tablas). Ver [_LEGACY_WARNING.md](_LEGACY_WARNING.md)
+>
+> **Arquitectura correcta**: [ARCHITECTURE-COMPLETE.md](ARCHITECTURE-COMPLETE.md) (1 tabla con campo `original_description`)
+
+---
 
 **Guardar el PDF parseado AS-IS, sin transformaciones**
 

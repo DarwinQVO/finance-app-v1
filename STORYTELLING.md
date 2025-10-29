@@ -1,6 +1,8 @@
-# Finance App V1: The Complete Story
+# Finance App: The Complete Story
 
 **Una narración de cómo Darwin usa Finance App desde el día 1 hasta su vida diaria**
+
+> **⚠️ NOTA**: Este storytelling se enfoca en las features core que se construyen primero (timeline, upload, normalization, transfers). El sistema completo incluye muchas más capacidades descritas en [SYSTEM-OVERVIEW.md](SYSTEM-OVERVIEW.md).
 
 ---
 
@@ -16,7 +18,7 @@ Cada mes, recibe **4 PDFs** con sus statements. En 2 años, ha acumulado **96 PD
 
 **El problema**: No tiene una vista unificada de todas sus finanzas. Cada banco tiene su propio dashboard, pero ninguno muestra el big picture.
 
-**La solución**: Finance App V1.
+**La solución**: Finance App.
 
 ---
 
@@ -24,7 +26,7 @@ Cada mes, recibe **4 PDFs** con sus statements. En 2 años, ha acumulado **96 PD
 
 ### 9:00 AM - Instalación
 
-Darwin descarga Finance App V1 desde su Mac. Doble-click. La app se abre.
+Darwin descarga Finance App desde su Mac. Doble-click. La app se abre.
 
 **Ve esto**:
 ```
@@ -550,7 +552,7 @@ Regeneration complete!
 
 ### Octubre 2026 - Darwin mira atrás
 
-Darwin ha usado Finance App V1 durante un año entero.
+Darwin ha usado Finance App durante un año entero.
 
 **Stats**:
 - 144 PDFs procesados (12 por mes × 12 meses)
@@ -574,7 +576,7 @@ Darwin ha usado Finance App V1 durante un año entero.
 - Export a Excel
 - Mobile app
 
-**Pero por ahora, V1 hace exactamente lo que necesita**.
+**Pero por ahora, Finance App hace exactamente lo que necesita**.
 
 ---
 
@@ -636,7 +638,7 @@ Todo en SQLite. Sin servidor. Sin API calls. Sin network needed.
 
 ## Conclusión
 
-Finance App V1 es **simple pero completo**.
+Finance App es **simple pero completo**.
 
 Hace una cosa: **mostrar todas tus transacciones bancarias en un timeline unificado**.
 
@@ -646,7 +648,7 @@ No hace **más**: No es budgeting app, no es investment tracker, no es financial
 
 **Y eso está perfecto**.
 
-V2 agregará más features. Pero V1 ya resuelve el problema principal de Darwin: **tener visibilidad completa de sus finanzas en un solo lugar**.
+Futuras expansiones agregarán más features. Pero ya resuelve el problema principal de Darwin: **tener visibilidad completa de sus finanzas en un solo lugar**.
 
 **Fin de la historia** ✓
 
