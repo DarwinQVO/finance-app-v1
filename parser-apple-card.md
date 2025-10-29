@@ -8,7 +8,7 @@ Apple Card tiene un formato limpio y minimalista (típico de Apple). El parser e
 - Date
 - Description (merchant name)
 - Amount
-- Category (optional, lo ignoramos en V1)
+- Category (optional, lo ignoramos)
 
 ---
 

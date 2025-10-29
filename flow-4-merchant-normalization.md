@@ -360,13 +360,13 @@ function calculateConfidence(observation, normalizedMerchant, clusterId) {
 
 ## Evolución de las reglas
 
-**V1**: Hardcodeadas (~20 reglas).
+**Phase 1**: Hardcodeadas (~20 reglas).
 
-**V2 (futuro)**: Darwin puede agregar reglas desde UI.
+**Phase 2**: Darwin puede agregar reglas desde UI.
 
-**V3 (futuro)**: ML aprende de las correcciones manuales.
+**Future**: ML aprende de las correcciones manuales.
 
-Pero en V1, hardcodeado está bien.
+Pero en Phase 1, hardcodeado está bien.
 
 ---
 
@@ -445,13 +445,13 @@ Similarity = 0.85 → Agrupados en mismo cluster.
 
 **Problema**: Son merchants diferentes.
 
-**Solución V1**: Hardcodear regla específica:
+**Solución inicial**: Hardcodear regla específica:
 ```javascript
 { pattern: /SHELL GAS STATION/, normalized: 'Shell Gas' },
 { pattern: /SHELL OIL COMPANY/, normalized: 'Shell Oil' },
 ```
 
-**Solución V2**: Permitir split cluster manualmente.
+**Solución futura**: Permitir split cluster manualmente.
 
 ---
 

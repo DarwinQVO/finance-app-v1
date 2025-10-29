@@ -1,6 +1,6 @@
 # UI: Timeline
 
-**La vista principal de Finance App V1**
+**La vista principal de Finance App**
 
 ## Overview
 

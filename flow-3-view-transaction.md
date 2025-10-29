@@ -407,7 +407,7 @@ Al cerrar, **slide out** hacia la derecha.
 ⚠️ Normalización manual recomendada
 ```
 
-**Acción futura**: Permitir editar merchant (V2).
+**Acción futura**: Permitir editar merchant.
 
 ---
 

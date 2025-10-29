@@ -273,9 +273,9 @@ Sep 26  Currency received               +€456.78 EUR
 
 **Problema**: Son la misma operación, pero en 2 currencies.
 
-**Solución V1**: Tratarlos como 2 transfers separados. NO linkear.
+**Solución inicial**: Tratarlos como 2 transfers separados. NO linkear.
 
-**Solución V2**: Detectar y linkear con exchange rate.
+**Solución futura**: Detectar y linkear con exchange rate.
 
 ```javascript
 function linkCurrencyExchange(txn1, txn2) {
@@ -297,7 +297,7 @@ function linkCurrencyExchange(txn1, txn2) {
 }
 ```
 
-**Para V1**: No implementar. Demasiado complejo.
+**Para Phase 1**: No implementar. Demasiado complejo.
 
 ---
 
@@ -449,7 +449,7 @@ expect(result[1].currency).toBe('USD');
 ## Notas
 
 - **Multi-currency**: Cada transacción tiene su currency
-- **Currency exchanges**: 2 transacciones, NO linkear en V1
+- **Currency exchanges**: 2 transacciones, NO linkear en Phase 1
 - **Transfer fees**: Separados como expense
 - **International**: Wise es global, muchos tipos de transactions
 

@@ -10,7 +10,7 @@ Bank of America tiene un formato consistente en sus PDFs. El parser extrae:
 - Amount
 - Balance (opcional, no lo usamos)
 
-**🚀 V1 Approach**: Config-driven parser que lee su configuración de la tabla `parser_configs` o archivo YAML.
+**🚀 Current Approach**: Config-driven parser que lee su configuración de la tabla `parser_configs` o archivo YAML.
 
 **No más parsers hardcodeados** - Agregar un nuevo banco solo requiere agregar un config.
 
@@ -238,7 +238,7 @@ module.exports = { parseWithConfig };
 
 ## BofA-Specific Implementation (Old Approach)
 
-**⚠️ Este código es el approach V1 hardcoded. En la versión final, este parser específico NO existiría - todo usaría el generic parser con configs.**
+**⚠️ Este código es el approach hardcoded antiguo. En la versión final, este parser específico NO existiría - todo usaría el generic parser con configs.**
 
 ```javascript
 // parsers/bofa.js (deprecated - solo para referencia)
@@ -563,7 +563,7 @@ expect(type).toBe('transfer');
 
 - **Currency siempre USD**: BofA es banco estadounidense
 - **Formato consistente**: BofA no cambia mucho su formato
-- **Account number**: Ignoramos (no lo necesitamos en V1)
+- **Account number**: Ignoramos (no lo necesitamos)
 - **Balance**: Ignoramos (no lo usamos para nada)
 
 ---

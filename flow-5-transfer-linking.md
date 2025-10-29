@@ -298,7 +298,7 @@ Sep 26  Scotia receipt +$500  (txn_4)
 
 **Problema**: ¿Cómo saber cuál va con cuál?
 
-**Solución V1**: **First-come, first-matched**.
+**Solución inicial**: **First-come, first-matched**.
 
 ```javascript
 // Procesamos en orden cronológico
@@ -310,7 +310,7 @@ linkTransfers();
 
 **Limitación**: Si el orden es incorrecto, puede linkear mal.
 
-**Solución V2**: Revisar merchant/description para hints.
+**Solución futura**: Revisar merchant/description para hints.
 
 ---
 
@@ -325,9 +325,9 @@ Oct 2   Foreign bank receipt  +$1,000  (6 días después)
 
 **Problema**: |Sep 26 - Oct 2| = 6 días > 3 días → no match.
 
-**Solución**: Darwin puede linkear manualmente (V2 feature).
+**Solución**: Darwin puede linkear manualmente (future feature).
 
-**Solución V1**: Aumentar ventana a 5 días para international banks.
+**Solución inicial**: Aumentar ventana a 5 días para international banks.
 
 ```javascript
 function getWindowDays(account1, account2) {
@@ -382,7 +382,7 @@ Sep 27  Scotia        +$19,850.00 MXN  (@ 19.85 rate)
 
 **Problema**: Montos diferentes (1000 ≠ 19850).
 
-**Solución V1**: **No linkear automáticamente**. Currencies diferentes = no match.
+**Solución inicial**: **No linkear automáticamente**. Currencies diferentes = no match.
 
 ```javascript
 function findTransferPair(txn) {
@@ -396,7 +396,7 @@ function findTransferPair(txn) {
 }
 ```
 
-**Solución V2**: Considerar exchange rate (más complejo).
+**Solución futura**: Considerar exchange rate (más complejo).
 
 ```javascript
 function findTransferPairCrossCurrency(txn) {
@@ -421,7 +421,7 @@ function findTransferPairCrossCurrency(txn) {
 }
 ```
 
-**Para V1**: No linkear cross-currency (demasiado complejo).
+**Para Phase 1**: No linkear cross-currency (demasiado complejo).
 
 ---
 
@@ -460,7 +460,7 @@ function findTransferPairCrossCurrency(txn) {
 
 ---
 
-**V1 usa Opción B** (más simple).
+**Phase 1 usa Opción B** (más simple).
 
 ---
 
@@ -502,7 +502,7 @@ Darwin hace click en un transfer.
 
 ---
 
-## Manual linking (V2 feature)
+## Manual linking (future feature)
 
 **Caso**: El auto-linking falló. Darwin quiere linkear manualmente.
 
@@ -587,11 +587,11 @@ Darwin puede ver todos los transfers.
 - **Cuentas diferentes**: BofA ≠ Wise
 - **Ambos transfers**: type = 'transfer'
 
-### Edge cases V1
+### Edge cases Phase 1
 - ✅ Mismo monto, mismo día → First-come, first-matched
 - ✅ Fees separados → No linkear fee
-- ❌ Currency conversion → No linkear (V2)
-- ❌ Fechas >3 días → No linkear (manual en V2)
+- ❌ Currency conversion → No linkear (future)
+- ❌ Fechas >3 días → No linkear (manual en futuras fases)
 
 ### UI
 - Icon ↔️ para transfers

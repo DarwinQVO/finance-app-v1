@@ -242,7 +242,7 @@ WHERE id = ?
 
 ```
 observation.canonical_id → transaction.id
-transaction.id ← múltiples observations (en teoría, pero en V1 es 1:1)
+transaction.id ← múltiples observations (en teoría, pero en práctica es 1:1)
 ```
 
 ---

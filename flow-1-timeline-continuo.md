@@ -1,6 +1,6 @@
 # Flow 1: Timeline Continuo ⭐
 
-**El flujo más importante de Finance App V1**
+**El flujo más importante de Finance App**
 
 ## El problema que resuelve
 
@@ -26,7 +26,7 @@ En apps tradicionales hay dos modos separados:
 
 ### Acto 1: El día 1
 
-Darwin acaba de instalar Finance App V1. Abre la app.
+Darwin acaba de instalar Finance App. Abre la app.
 
 **Ve esto**:
 ```
@@ -168,7 +168,7 @@ NO hay conceptos de "setup" vs "daily use". Solo hay "la app".
 
 ---
 
-## Comparación: App tradicional vs Finance App V1
+## Comparación: App tradicional vs Finance App
 
 ### App tradicional
 ```
@@ -186,7 +186,7 @@ Problemas:
 - Si falta algo, ¿vuelves a setup?
 ```
 
-### Finance App V1
+### Finance App
 ```
 User journey:
 1. Arrastra PDF

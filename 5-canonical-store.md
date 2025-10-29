@@ -397,11 +397,11 @@ function deleteTransaction(transactionId) {
 
 ## Update transaction
 
-En V1, **NO permitimos edits**. Solo delete.
+En Phase 1, **NO permitimos edits**. Solo delete.
 
 **Razón**: Si editas transactions, se desincroniza con observations.
 
-**V2**: Permitir edit → marcar observation como "overridden" → no regenerar ese canonical.
+**Future**: Permitir edit → marcar observation como "overridden" → no regenerar ese canonical.
 
 ---
 

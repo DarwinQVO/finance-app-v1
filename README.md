@@ -1,4 +1,4 @@
-# Finance App V1 - Complete Documentation
+# Finance App - Complete Documentation
 
 **Sistema completo de finanzas personales - Documentado primero, construido incremental**
 
@@ -215,7 +215,7 @@ Finance App es una aplicación completa de finanzas personales que te permite:
 
 ### ¿Por qué documentar TODO primero?
 
-**Problema previo**: "V1 simple → V2 rewrite" = trabajo duplicado, arquitectura limitante
+**Problema previo**: "Build simple → rewrite later" = trabajo duplicado, arquitectura limitante
 
 **Solución actual**:
 - Documentar sistema COMPLETO ahora

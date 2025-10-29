@@ -338,7 +338,7 @@ Oct 15  Random Coffee Shop XYZ    -$12.45  USD  [BofA]
 
 **Darwin entiende**: Es un merchant nuevo que la app nunca vio antes. Por eso el confidence es bajo.
 
-**Nota para V2**: Agregar feature para editar merchant manualmente.
+**Nota para futuras expansiones**: Agregar feature para editar merchant manualmente.
 
 ---
 
@@ -569,7 +569,7 @@ Darwin ha usado Finance App durante un año entero.
 - Performance (18k transacciones, queries <50ms)
 - Simplicidad (1,800 LOC, todo local, sin servidor)
 
-**Lo que quiere para V2**:
+**Siguientes features planeadas**:
 - Edit merchants manualmente
 - Categories & tags
 - Budget tracking

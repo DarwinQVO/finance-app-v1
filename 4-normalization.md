@@ -298,13 +298,13 @@ Avg similarity: N/A (+0.0)
 Confidence: 0.1 (10%)
 ```
 
-**Acción**: Revisar manualmente (V2 feature).
+**Acción**: Revisar manualmente (future feature).
 
 ---
 
 ## Expandir reglas
 
-**V1**: Empezar con ~20 reglas comunes.
+**Phase 1**: Empezar con ~20 reglas comunes.
 
 **Durante desarrollo**: Agregar más reglas al ver merchants reales.
 

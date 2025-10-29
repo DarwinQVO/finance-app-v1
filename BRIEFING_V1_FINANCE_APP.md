@@ -1,8 +1,18 @@
-# Briefing: Finance App V1 - Simple pero Completa
+# ⚠️ ORIGINAL BRIEFING (Historical Reference)
+
+> **⚠️ LEGACY DOCUMENT**: Este es el briefing ORIGINAL del proyecto (Oct 2025). Contiene referencias a "V1" porque fue creado cuando el proyecto apenas comenzaba.
+>
+> **Estado actual**: El sistema evolucionó a documentar la aplicación COMPLETA desde el inicio. Ver [SYSTEM-OVERVIEW.md](SYSTEM-OVERVIEW.md) para la descripción actual.
+>
+> **Razón de existencia**: Referencia histórica del approach original y contexto del proyecto.
+
+---
+
+# Briefing: Finance App - Simple pero Completa
 **Date**: 2025-10-28
-**Purpose**: Documentación completa para implementar V1 del finance app
+**Purpose**: Documentación completa para implementar el finance app
 **Approach**: Example-first, Abstract-later
-**Target**: Nueva carpeta, nueva sesión, V1 desde cero
+**Target**: Nueva carpeta, nueva sesión, desde cero
 
 ---
 

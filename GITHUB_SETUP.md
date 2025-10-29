@@ -4,7 +4,7 @@
 
 1. Ve a https://github.com/new
 2. **Repository name**: `finance-app-v1` (o el nombre que quieras)
-3. **Description**: `Complete documentation for Finance App V1 - Simple but complete personal finance tracker`
+3. **Description**: `Complete documentation for Finance App - Simple but complete personal finance tracker (~1,800 LOC)`
 4. **Public** o **Private** (tú decides)
 5. ❌ **NO** marques "Initialize with README" (ya tenemos uno)
 6. Click **Create repository**
