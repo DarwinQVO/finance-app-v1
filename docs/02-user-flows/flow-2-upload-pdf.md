@@ -61,9 +61,9 @@ Darwin suelta el archivo.
 │                                                  │
 │  ✓ Leyendo PDF                                   │
 │  ✓ Extrayendo texto                              │
-│  ⏳ Parseando transacciones...                    │
-│  ⏺ Normalizando merchants                        │
-│  ⏺ Creando transacciones                         │
+│  ✓ Parseando transacciones                       │
+│  ⏳ Normalizando merchants...                     │
+│  ⏺ Clasificando tipos                            │
 │                                                  │
 │  ████████████░░░░░░░░  60%                      │
 │                                                  │
@@ -145,32 +145,29 @@ ipcMain.on('upload-pdf', async (event, filePath) => {
 });
 
 async function processUpload(filePath, account) {
-  // 1. Check duplicado
-  const hash = sha256(filePath);
-  const exists = db.queryOne(
-    'SELECT 1 FROM observations WHERE pdf_hash = ?',
-    [hash]
-  );
+  // 1. Extract & parse PDF → INSERT transactions
+  const result = await extractFromPDF({
+    file: { path: filePath, name: basename(filePath) },
+    accountId: account,
+    config: {
+      autoDetect: true,
+      skipDuplicates: true  // Check source_hash for dedup
+    }
+  });
 
-  if (exists) {
+  if (result.metadata.duplicatesSkipped > 0) {
     return { status: 'skipped', reason: 'Already processed' };
   }
 
-  // 2. Parse PDF
-  const transactions = await parsePDF(filePath, account);
-
-  // 3. Insert observations
-  transactions.forEach(txn => insertObservation(txn, filePath, hash));
-
-  // 4. Run pipeline
-  await runPipeline();
+  // 2. Run pipeline stages on newly inserted transactions
+  await runPipeline(result.transactions);
 
   return {
     status: 'success',
-    count: transactions.length,
+    count: result.transactions.length,
     dateRange: {
-      from: transactions[0].date,
-      to: transactions[transactions.length - 1].date
+      from: result.transactions[0].date,
+      to: result.transactions[result.transactions.length - 1].date
     }
   };
 }
@@ -181,26 +178,34 @@ async function processUpload(filePath, account) {
 ### 3. Pipeline ejecuta
 
 ```javascript
-async function runPipeline() {
-  // Stage 2: Clustering
-  const newObservations = db.query(
-    'SELECT * FROM observations WHERE canonical_id IS NULL'
-  );
-  const clusters = clusterMerchants(newObservations);
+async function runPipeline(newTransactions) {
+  // Stage 1: Clustering (optional - generates clusterMap)
+  let clusterMap = new Map();
+  if (config.stages.clustering.enabled) {
+    const result = await clusterMerchants(newTransactions, {
+      similarityThreshold: 0.8
+    });
+    clusterMap = result.clusterMap;
+  }
 
-  // Stage 3: Normalization
-  const normalized = newObservations.map(obs => ({
-    ...obs,
-    merchant: normalizeMerchant(obs.description, clusters[obs.id])
-  }));
-
-  // Stage 4: Create canonical
-  normalized.forEach(obs => {
-    const txn = createCanonicalTransaction(obs);
+  // Stage 2: Normalization (UPDATE transactions.merchant)
+  await normalizeTransactions({
+    transactions: newTransactions,
+    clusterMap,
+    config: { useRules: true, useClusters: true }
   });
 
-  // Stage 5: Link transfers
-  linkTransfers();
+  // Stage 3: Classification (UPDATE transactions.type)
+  await classifyTransactions({
+    transactions: newTransactions,
+    config: { useKeywords: true }
+  });
+
+  // Stage 4: Link transfers (UPDATE transactions.transfer_pair_id)
+  await linkTransfers(newTransactions, {
+    timeWindowDays: 3,
+    amountTolerance: 0.01
+  });
 }
 ```
 
@@ -348,7 +353,7 @@ function sha256(filePath) {
 
 function isDuplicate(hash) {
   const exists = db.queryOne(
-    'SELECT 1 FROM observations WHERE pdf_hash = ?',
+    'SELECT 1 FROM transactions WHERE source_hash = ?',
     [hash]
   );
   return !!exists;
@@ -505,28 +510,41 @@ function UploadZone() {
 
 **Pregunta**: Si cierro la app mientras procesa, ¿se pierde?
 
-**Respuesta**: No. Cada observation se guarda en DB inmediatamente.
+**Respuesta**: No. Cada transaction se guarda en DB inmediatamente durante Stage 0 (PDF Extraction).
 
 ```javascript
-function insertObservation(txn, pdfPath, hash) {
-  // Transaction SQL para atomicidad
-  db.transaction(() => {
-    db.insert('observations', {
-      id: uuid(),
-      account: txn.account,
-      pdf_filename: basename(pdfPath),
-      pdf_hash: hash,
-      date: txn.date,
-      description: txn.description,
-      amount_raw: txn.amount,
-      currency: txn.currency,
-      created_at: now()
-    });
-  });
+// Stage 0 hace INSERT directo a transactions
+async function insertTransaction(txn) {
+  await db.run(`
+    INSERT INTO transactions (
+      id, account_id, date, original_description,
+      amount_raw, amount, merchant, type, currency,
+      source_type, source_file, source_hash,
+      created_at, updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    txn.id,
+    txn.account_id,
+    txn.date,
+    txn.original_description,
+    txn.amount_raw,
+    txn.amount,
+    txn.merchant,  // Initially = original_description
+    null,          // type (null - will be set by Stage 3)
+    txn.currency,
+    'pdf',
+    basename(pdfPath),
+    txn.source_hash,
+    now(),
+    now()
+  ]);
 }
 ```
 
-**Si la app crashea**: Al reabrir, las observations ya están en DB. Solo falta correr el pipeline.
+**Si la app crashea**: Al reabrir, las transactions ya están en DB con:
+- `merchant` = `original_description` (sin normalizar)
+- `type` = null (sin clasificar)
+- Solo falta correr pipeline stages para completar UPDATE.
 
 ---
 
@@ -548,22 +566,33 @@ Después del primer upload, el botón "Upload" aparece en el header.
 
 ---
 
-## Resumen del flujo
+## Resumen del flujo (1-Table Architecture)
 
 ```
 1. Usuario arrastra PDF
    ↓
 2. Electron recibe file path
    ↓
-3. Detectar banco (auto)
+3. Stage 0: PDF Extraction
+   - Detectar banco (auto-detect via keywords)
+   - Extraer texto con pdf-parse
+   - Parser específico → Array de transactions
+   - INSERT en transactions (con source_hash para dedup)
    ↓
-4. Extraer texto con pdf-parse
+4. Stage 1: Clustering (opcional)
+   - Agrupar merchants similares
+   - Retorna clusterMap (ephemeral - no persiste)
    ↓
-5. Parser específico → Array de transactions
+5. Stage 2: Normalization
+   - UPDATE transactions.merchant (de "STARBUCKS #123" a "Starbucks")
+   - Usa rules de normalization_rules table
    ↓
-6. Insert en observations (con hash para dedup)
+6. Stage 3: Classification
+   - UPDATE transactions.type (expense/income/transfer)
+   - Usa keywords de parser_configs table
    ↓
-7. Run pipeline (cluster + normalize + canonical)
+7. Stage 4: Transfer Linking
+   - UPDATE transactions.transfer_pair_id (link A→B con B←A)
    ↓
 8. UI refetch transactions
    ↓
@@ -573,6 +602,10 @@ Después del primer upload, el botón "Upload" aparece en el header.
 ```
 
 **Tiempo total**: 2-5 segundos.
+
+**Key difference**:
+- ❌ OLD: Insert observations → run pipeline → create canonical transactions
+- ✅ NEW: Insert transactions → run pipeline (UPDATE merchant, type, etc.)
 
 ---
 

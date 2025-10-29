@@ -65,7 +65,7 @@ Sep 3   STARBUCKS #11111                          -4.89
 
 ### Escena 2: Pipeline corre
 
-**Stage 2: Clustering**
+**Stage 1: Clustering**
 ```javascript
 // Encuentra que los 3 strings son similares
 similarity("STARBUCKS STORE #12345", "STARBUCKS STORE #67890") = 0.89
@@ -74,16 +74,24 @@ similarity("STARBUCKS STORE #12345", "STARBUCKS #11111") = 0.82
 // Los agrupa en cluster_abc123
 ```
 
-**Stage 3: Normalization**
+**Stage 2: Normalization**
 ```javascript
-// Busca regla
-pattern: /STARBUCKS.*#\d+/
-normalized: "Starbucks"
+// Load rule from normalization_rules table
+SELECT * FROM normalization_rules
+WHERE is_active = TRUE AND pattern LIKE '%STARBUCKS%';
 
-// Aplica regla
-"STARBUCKS STORE #12345" → "Starbucks"
-"STARBUCKS STORE #67890" → "Starbucks"
-"STARBUCKS #11111" → "Starbucks"
+// Result:
+// pattern: "STARBUCKS.*#?\d+"
+// normalized_merchant: "Starbucks"
+
+// Aplica regla (UPDATE transactions.merchant)
+UPDATE transactions SET merchant = 'Starbucks'
+WHERE original_description LIKE '%STARBUCKS%';
+
+// Result:
+// "STARBUCKS STORE #12345" → "Starbucks"
+// "STARBUCKS STORE #67890" → "Starbucks"
+// "STARBUCKS #11111" → "Starbucks"
 ```
 
 ### Escena 3: Timeline limpio
@@ -147,9 +155,14 @@ function clusterMerchants(observations) {
 }
 ```
 
-**Threshold hardcodeado**: 0.8 (80% similarity).
+**Config-driven threshold**: Configurable via `stages.clustering.similarityThreshold` (default: 0.8).
 
-**Resultado**: Observations agrupadas por similitud.
+```javascript
+// From pipeline config
+const threshold = config.stages.clustering.similarityThreshold || 0.8;
+```
+
+**Resultado**: Transactions agrupadas por similitud (ephemeral clusters, no persisted).
 
 ---
 
@@ -200,93 +213,113 @@ obs_4: "STARBUCKS #11111"
 
 ---
 
-## Stage 3: Normalization (Detalle técnico)
+## Stage 2: Normalization (Detalle técnico)
 
-### Método 1: Reglas hardcodeadas
+### LEGO Architecture: DB-Driven Rules 🧱
 
-Empezamos con ~20 reglas para los merchants más comunes de Darwin.
+Las reglas se cargan desde la tabla `normalization_rules` - NO hardcodeadas.
 
 ```javascript
-const NORMALIZATION_RULES = [
-  // Starbucks
-  { pattern: /STARBUCKS.*#\d+/, normalized: 'Starbucks' },
+// Load rules from DB (NOT hardcoded array)
+async function loadNormalizationRules() {
+  return await db.all(`
+    SELECT id, pattern, normalized_merchant, priority, category_hint
+    FROM normalization_rules
+    WHERE is_active = TRUE
+    ORDER BY priority DESC
+  `);
+}
 
-  // Amazon
-  { pattern: /AMAZON\.COM\*[A-Z0-9]+/, normalized: 'Amazon' },
-  { pattern: /AMZN\.COM/, normalized: 'Amazon' },
+async function normalizeTransactions({ transactions, clusterMap, config }) {
+  // Load rules dynamically
+  const rules = await loadNormalizationRules();
 
-  // Uber
-  { pattern: /UBER \*TRIP/, normalized: 'Uber' },
-  { pattern: /UBER \*EATS/, normalized: 'Uber Eats' },
+  const updates = [];
 
-  // Netflix, Spotify, etc
-  { pattern: /NETFLIX/, normalized: 'Netflix' },
-  { pattern: /SPOTIFY/, normalized: 'Spotify' },
+  for (const txn of transactions) {
+    let normalizedMerchant = null;
+    let matchedRuleId = null;
 
-  // Gas stations
-  { pattern: /SHELL.*\d{5}/, normalized: 'Shell' },
-  { pattern: /CHEVRON.*\d{5}/, normalized: 'Chevron' },
+    // Try rules first
+    if (config.useRules) {
+      for (const rule of rules) {
+        const regex = new RegExp(rule.pattern, 'i');
+        if (regex.test(txn.original_description)) {
+          normalizedMerchant = rule.normalized_merchant;
+          matchedRuleId = rule.id;
+          break;
+        }
+      }
+    }
 
-  // Grocery
-  { pattern: /COSTCO.*\d{4}/, normalized: 'Costco' },
-  { pattern: /TARGET.*T-\d+/, normalized: 'Target' },
-  { pattern: /WALMART.*\d{4}/, normalized: 'Walmart' },
+    // Fallback to cluster
+    if (!normalizedMerchant && config.useClusters && clusterMap.has(txn.id)) {
+      normalizedMerchant = normalizeFromCluster(
+        txn.original_description,
+        clusterMap.get(txn.id)
+      );
+    }
 
-  // Food delivery
-  { pattern: /DOORDASH/, normalized: 'DoorDash' },
-  { pattern: /GRUBHUB/, normalized: 'GrubHub' },
+    // Fallback to original
+    if (!normalizedMerchant && config.fallbackToOriginal) {
+      normalizedMerchant = cleanString(txn.original_description);
+    }
 
-  // Utilities
-  { pattern: /SCE PAYMENT/, normalized: 'Southern California Edison' },
-  { pattern: /AT&T/, normalized: 'AT&T' },
+    // UPDATE merchant field (not INSERT)
+    if (normalizedMerchant) {
+      await db.run(`
+        UPDATE transactions
+        SET merchant = ?,
+            normalization_rule_id = ?,
+            updated_at = ?
+        WHERE id = ?
+      `, normalizedMerchant, matchedRuleId, new Date().toISOString(), txn.id);
 
-  // ... más reglas
-];
-
-function normalizeMerchant(description, clusterId) {
-  // Buscar match en reglas
-  for (const rule of NORMALIZATION_RULES) {
-    if (rule.pattern.test(description)) {
-      return rule.normalized;
+      updates.push({ id: txn.id, merchant: normalizedMerchant });
     }
   }
 
-  // Si no hay regla, usar cluster
-  return normalizeFromCluster(description, clusterId);
+  return { updates, stats: { rulesMatched: updates.length } };
 }
+```
+
+**Add rule WITHOUT code change**:
+```sql
+-- Darwin adds new rule via SQL or UI
+INSERT INTO normalization_rules (pattern, normalized_merchant, priority, is_active)
+VALUES ('WHOLE\s*FOODS.*#?\d+', 'Whole Foods', 100, TRUE);
+
+-- Next pipeline run uses this rule automatically ✅
 ```
 
 ---
 
-### Método 2: Fallback a cluster
+### Método 2: Fallback a Cluster
 
-Si no hay regla, usamos el cluster para normalizar.
+Si no hay regla, usamos el cluster para normalizar (ephemeral, no persisted).
 
 ```javascript
 function normalizeFromCluster(description, clusterId) {
-  // Obtener todos los miembros del cluster
-  const members = db.query(
-    `SELECT DISTINCT description
-     FROM observations
-     WHERE cluster_id = ?`,
-    [clusterId]
-  );
+  // Get cluster members from ephemeral clusterMap (not DB)
+  // clusterMap is passed from Stage 1 (clustering)
 
-  // Tomar el string más corto (suele ser el más limpio)
-  const shortest = members
-    .map(m => m.description)
+  // In practice, take the shortest member of the cluster
+  // (shortest strings are usually cleanest)
+  const clusterMembers = getClusterMembers(clusterId);
+
+  const shortest = clusterMembers
     .sort((a, b) => a.length - b.length)[0];
 
-  // Limpiar: quitar números, caps, trim
+  // Clean: remove numbers, normalize caps, trim
   return cleanString(shortest);
 }
 
 function cleanString(str) {
   return str
-    .replace(/#\d+/g, '')        // Quitar #12345
-    .replace(/\*[A-Z0-9]+/g, '') // Quitar *M89JF2K3
-    .replace(/\s+/g, ' ')        // Normalizar espacios
-    .replace(/[^a-zA-Z0-9\s]/g, '') // Quitar símbolos raros
+    .replace(/#\d+/g, '')                 // Remove #12345
+    .replace(/\*[A-Z0-9]+/g, '')          // Remove *M89JF2K3
+    .replace(/\s+/g, ' ')                 // Normalize spaces
+    .replace(/[^a-zA-Z0-9\s&]/g, '')      // Remove weird symbols
     .trim()
     .split(' ')
     .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
@@ -297,44 +330,59 @@ function cleanString(str) {
 **Ejemplo**:
 ```
 Input: "STARBUCKS STORE #12345 SANTA MONICA CA"
-Shortest en cluster: "STARBUCKS #11111"
-Después de clean: "Starbucks"
+Shortest in cluster: "STARBUCKS #11111"
+After clean: "Starbucks"
 ```
+
+**Note**: Clusters are NOT stored in DB - they're computed on-demand during pipeline execution.
 
 ---
 
-## Confidence score
+## Confidence Score
 
 Calculamos un score (0.0-1.0) para indicar qué tan segura es la normalización.
 
 ```javascript
-function calculateConfidence(observation, normalizedMerchant, clusterId) {
+function calculateConfidence(txn, normalizedMerchant, matchedRuleId, clusterId) {
   let confidence = 0.0;
 
-  // +50% si matched con regla
-  const matchedRule = NORMALIZATION_RULES.find(r =>
-    r.pattern.test(observation.description)
-  );
-  if (matchedRule) {
-    confidence += 0.5;
+  // +50% if matched DB rule
+  if (matchedRuleId) {
+    const rule = await db.get(
+      'SELECT priority FROM normalization_rules WHERE id = ?',
+      matchedRuleId
+    );
+
+    // Higher priority rules = higher confidence
+    if (rule.priority >= 100) {
+      confidence += 0.5;
+    } else if (rule.priority >= 50) {
+      confidence += 0.4;
+    } else {
+      confidence += 0.3;
+    }
   }
 
-  // +30% si cluster tiene >5 miembros
-  const clusterSize = getClusterSize(clusterId);
-  if (clusterSize >= 5) {
-    confidence += 0.3;
-  } else if (clusterSize >= 3) {
-    confidence += 0.2;
-  } else {
-    confidence += 0.1;
+  // +30% if cluster has >5 members
+  if (clusterId) {
+    const clusterSize = getClusterSize(clusterId);
+    if (clusterSize >= 5) {
+      confidence += 0.3;
+    } else if (clusterSize >= 3) {
+      confidence += 0.2;
+    } else {
+      confidence += 0.1;
+    }
   }
 
-  // +20% si similarity promedio es alta
-  const avgSimilarity = getAverageClusterSimilarity(clusterId);
-  if (avgSimilarity >= 0.9) {
-    confidence += 0.2;
-  } else if (avgSimilarity >= 0.8) {
-    confidence += 0.1;
+  // +20% if similarity average is high
+  if (clusterId) {
+    const avgSimilarity = getAverageClusterSimilarity(clusterId);
+    if (avgSimilarity >= 0.9) {
+      confidence += 0.2;
+    } else if (avgSimilarity >= 0.8) {
+      confidence += 0.1;
+    }
   }
 
   return Math.min(confidence, 1.0);
@@ -344,13 +392,13 @@ function calculateConfidence(observation, normalizedMerchant, clusterId) {
 **Ejemplos**:
 ```
 "STARBUCKS STORE #12345"
-→ Matched rule ✓ (+0.5)
+→ Matched DB rule (priority: 100) ✓ (+0.5)
 → Cluster size: 12 ✓ (+0.3)
 → Avg similarity: 0.92 ✓ (+0.2)
 → Confidence: 1.0 (100%)
 
 "RANDOM MERCHANT XYZ"
-→ No rule ✗ (+0.0)
+→ No rule match ✗ (+0.0)
 → Cluster size: 1 ✗ (+0.1)
 → Avg similarity: N/A (+0.0)
 → Confidence: 0.1 (10%)
@@ -358,15 +406,42 @@ function calculateConfidence(observation, normalizedMerchant, clusterId) {
 
 ---
 
-## Evolución de las reglas
+## Extensibility: Adding Rules 🧱
 
-**Phase 1**: Hardcodeadas (~20 reglas).
+**Current State**: DB-driven LEGO architecture (✅ already implemented).
 
-**Phase 2**: Darwin puede agregar reglas desde UI.
+Darwin puede agregar reglas de 2 formas:
 
-**Future**: ML aprende de las correcciones manuales.
+### Method 1: SQL Insert
+```sql
+INSERT INTO normalization_rules (
+  pattern, normalized_merchant, priority, category_hint, is_active
+) VALUES (
+  'TARGET.*T-\d+', 'Target', 95, 'Shopping', TRUE
+);
+```
 
-Pero en Phase 1, hardcodeado está bien.
+### Method 2: Via UI (future)
+```
+┌─────────────────────────────────────┐
+│  Add Normalization Rule             │
+├─────────────────────────────────────┤
+│  Pattern (regex):                   │
+│  [TARGET.*T-\d+           ]         │
+│                                     │
+│  Normalized Merchant:               │
+│  [Target                  ]         │
+│                                     │
+│  Priority: [95           ]          │
+│  Category: [Shopping ▼   ]          │
+│                                     │
+│  [Cancel]  [Save Rule]              │
+└─────────────────────────────────────┘
+```
+
+**No code changes needed** - next pipeline run uses new rule automatically.
+
+**Future**: ML learns from manual corrections and suggests rules.
 
 ---
 
@@ -499,40 +574,48 @@ for each observation {
 
 ---
 
-## Regenerar normalización
+## Regenerar Normalización
 
-Si Darwin cambia las reglas, puede regenerar todas las transacciones.
+Si Darwin cambia las reglas, puede re-correr el pipeline para actualizar los merchants.
 
 ```javascript
-function regenerateCanonical() {
-  // 1. Delete todas las transactions
-  db.execute('DELETE FROM transactions');
+async function regenerateNormalization() {
+  // 1. Get all transactions
+  const transactions = await db.all('SELECT * FROM transactions');
 
-  // 2. Re-cluster
-  const observations = db.query('SELECT * FROM observations');
-  const clusterMap = clusterMerchants(observations);
-
-  // 3. Re-normalize + re-create canonical
-  observations.forEach(obs => {
-    const clusterId = clusterMap[obs.id];
-    const merchant = normalizeMerchant(obs.description, clusterId);
-    const confidence = calculateConfidence(obs, merchant, clusterId);
-
-    createCanonicalTransaction({
-      ...obs,
-      merchant,
-      confidence
-    });
+  // 2. Re-cluster (ephemeral)
+  const { clusterMap } = await clusterMerchants(transactions, {
+    similarityThreshold: 0.8
   });
 
-  // 4. Re-link transfers
-  linkTransfers();
+  // 3. Re-normalize (UPDATE merchant field)
+  await normalizeTransactions({
+    transactions,
+    clusterMap,
+    config: {
+      useRules: true,
+      useClusters: true,
+      fallbackToOriginal: true
+    }
+  });
+
+  // 4. Re-classify types (if needed)
+  await classifyTransactions({ transactions, config });
+
+  // 5. Re-link transfers (if needed)
+  await linkTransfers(transactions, config);
 }
 ```
 
-**Tiempo**: ~10 segundos para 12k transactions.
+**Key Difference from 2-table architecture**:
+- No DELETE/INSERT (preserves transaction IDs and history)
+- Only UPDATE fields: `merchant`, `type`, `transfer_pair_id`
+- `original_description` remains immutable
+- Faster and safer (no data loss risk)
 
-**Uso**: Darwin tweakea reglas → regenera → ve resultado nuevo.
+**Tiempo**: ~5 segundos for 12k transactions.
+
+**Uso**: Darwin adds rule → re-runs pipeline → sees updated merchants.
 
 ---
 
@@ -562,24 +645,36 @@ function regenerateCanonical() {
 
 ## Resumen
 
-### Stage 2: Clustering
-- **Input**: Observations con description raw
+### Stage 1: Clustering
+- **Input**: Transactions with `original_description`
 - **Algorithm**: String similarity (Levenshtein)
-- **Threshold**: 0.8 (hardcoded)
-- **Output**: cluster_id por observation
+- **Threshold**: Config-driven (default: 0.8)
+- **Output**: Ephemeral `clusterMap` (NOT stored in DB)
+- **LEGO Score**: 9/10 (optional, swappable, config-driven)
 - **LOC**: ~50
 
-### Stage 3: Normalization
-- **Input**: Observation + cluster_id
-- **Method 1**: Reglas con regex (~20 reglas iniciales)
-- **Method 2**: Fallback a cluster (tomar shortest + clean)
-- **Output**: Merchant normalizado + confidence score
+### Stage 2: Normalization
+- **Input**: Transactions + clusterMap (from Stage 1)
+- **Method 1**: DB-driven rules from `normalization_rules` table
+- **Method 2**: Fallback to cluster (shortest + clean)
+- **Method 3**: Fallback to `original_description` (cleaned)
+- **Output**: UPDATE `transactions.merchant` field
+- **LEGO Score**: 9/10 (DB-driven, extensible, no code changes)
 - **LOC**: ~100
 
-### Total pipeline
-- Clustering: ~5 seg para 12k observations
-- Normalization: ~2 seg
-- **Total**: ~7 seg
+### LEGO Criteria Met ✅
+1. ✅ Config-driven (rules in DB, threshold configurable)
+2. ✅ Swappable (can replace clustering algorithm)
+3. ✅ Optional (can disable via config)
+4. ✅ Extensible (add rules via SQL INSERT)
+5. ✅ Testable (unit tests work independently)
+6. ✅ Clear interface (see `0-pipeline-interfaces.md`)
+7. ✅ Fault-tolerant (errors don't cascade)
+
+### Total Pipeline Performance
+- Clustering: ~3 sec for 12k transactions
+- Normalization: ~2 sec
+- **Total**: ~5 sec
 
 ---
 

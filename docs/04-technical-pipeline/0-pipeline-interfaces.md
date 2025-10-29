@@ -291,7 +291,50 @@ async function normalizeTransaction(txn, clusterMap, rules) {
 
 ---
 
-### Stage 3: Transfer Linking (OPTIONAL)
+### Stage 3: Classification (Type Detection)
+
+**Purpose**: Classify transactions as income/expense/transfer
+
+**Input**:
+```typescript
+interface ClassificationInput {
+  transactions: Transaction[];         // Transactions with merchant set
+  config: {
+    useKeywords: boolean;              // Use transfer keywords from DB
+    useAmountPattern: boolean;         // Detect patterns (salary, etc)
+  };
+}
+```
+
+**Output**:
+```typescript
+interface ClassificationOutput {
+  updates: ClassificationUpdate[];
+  stats: {
+    income: number;
+    expense: number;
+    transfer: number;
+    unclassified: number;
+  };
+}
+
+interface ClassificationUpdate {
+  transactionId: string;
+  type: 'income' | 'expense' | 'transfer';
+  confidence: number;
+  method: 'keyword' | 'pattern' | 'manual';
+}
+```
+
+**Side effects**: Updates `transactions.type` field
+
+**Can I skip?**: NO - Required for transfer linking and UI display
+
+**Can I swap?**: YES - Replace with LLM classification, manual review, etc.
+
+---
+
+### Stage 4: Transfer Linking (OPTIONAL)
 
 **Purpose**: Link transfers between accounts (A→B and B←A)
 
@@ -340,7 +383,7 @@ const config = { enabled: false };
 
 ---
 
-### Stage 4: Categorization (OPTIONAL - Phase 2)
+### Stage 5: Categorization (OPTIONAL - Phase 2)
 
 **Purpose**: Auto-assign categories using rules
 
@@ -429,6 +472,11 @@ interface PipelineConfig {
       useRules: boolean;
       useClusters: boolean;
     };
+    classification: {
+      enabled: boolean;
+      useKeywords: boolean;
+      useAmountPattern: boolean;
+    };
     transferLinking: {
       enabled: boolean;
       timeWindowDays: number;
@@ -484,7 +532,15 @@ async function runPipeline(file, accountId, config) {
     return { success: false, errors };
   }
 
-  // Stage 3: Link transfers (optional)
+  // Stage 3: Classification (required)
+  try {
+    await classifyTransactions(transactions, config.stages.classification);
+  } catch (err) {
+    errors.push({ stage: 'classification', severity: 'error', message: err.message, recoverable: false });
+    return { success: false, errors };
+  }
+
+  // Stage 4: Link transfers (optional)
   if (config.stages.transferLinking.enabled) {
     try {
       await linkTransfers(transactions, config.stages.transferLinking);

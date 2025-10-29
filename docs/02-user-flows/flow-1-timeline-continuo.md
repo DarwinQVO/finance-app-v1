@@ -208,17 +208,25 @@ Beneficios:
 **PDF hash**: Cada PDF se hashea (SHA256). Si ya procesaste ese PDF, skip.
 
 ```javascript
-function uploadPDF(pdfPath, account) {
-  const hash = sha256(pdfPath);
+async function uploadPDF(pdfPath, accountId) {
+  const hash = sha256(fs.readFileSync(pdfPath));
 
-  // Check si ya existe
-  const exists = db.queryOne('SELECT 1 FROM observations WHERE pdf_hash = ?', [hash]);
+  // Check if already processed (1-table architecture)
+  const exists = await db.get(
+    'SELECT 1 FROM transactions WHERE source_hash = ? LIMIT 1',
+    hash
+  );
 
   if (exists) {
     return { status: 'skipped', reason: 'Already processed' };
   }
 
-  // Procesar...
+  // Process PDF → INSERT transactions
+  await extractFromPDF({
+    file: { path: pdfPath, name: basename(pdfPath) },
+    accountId,
+    config: { autoDetect: true, skipDuplicates: true }
+  });
 }
 ```
 
@@ -310,7 +318,14 @@ ORDER BY date DESC;
 
 1. Click derecho en transacción → "Delete"
 2. Confirmación: "¿Borrar esta transacción? No se puede deshacer."
-3. Si acepta → borra de `transactions` Y de `observations`
+3. Si acepta → borra de `transactions` table (1-table architecture)
+
+```javascript
+async function deleteTransaction(transactionId) {
+  // Single DELETE (1-table architecture)
+  await db.run('DELETE FROM transactions WHERE id = ?', transactionId);
+}
+```
 
 **Resultado**: Desaparece del timeline permanentemente.
 

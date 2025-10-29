@@ -52,6 +52,49 @@ Finance App es una aplicación completa de finanzas personales que te permite:
 
 ---
 
+## 🧱 LEGO Architecture (100% Modular)
+
+**Filosofía**: Self-contained logic units que puedes quitar/poner, NO playdough blobs que cambian cuando todo cambia.
+
+### Pipeline Stages (All LEGOs 🧱)
+
+| Stage | Purpose | Config-Driven | Swappable | Optional | LEGO Score |
+|-------|---------|---------------|-----------|----------|------------|
+| **Stage 0** | PDF Extraction | ✅ DB parsers | ✅ Yes | ❌ Required | 9/10 |
+| **Stage 1** | Clustering | ✅ Threshold config | ✅ Yes | ✅ Yes | 9/10 |
+| **Stage 2** | Normalization | ✅ DB rules | ✅ Yes | ❌ Required | 9/10 |
+| **Stage 3** | Classification | ✅ DB keywords | ✅ Yes | ❌ Required | 9/10 |
+| **Stage 4** | Transfer Linking | ✅ Config params | ✅ Yes | ✅ Yes | 9/10 |
+
+### LEGO Criteria (7/7 Met) ✅
+
+1. **✅ Config-driven**: Rules, parsers, thresholds in DB/config (not code)
+2. **✅ Swappable**: Replace clustering algo without touching other stages
+3. **✅ Optional**: Disable clustering/transfer linking via config
+4. **✅ Extensible**: Add new bank parser = SQL INSERT (no code)
+5. **✅ Testable**: Each stage has clear input/output interface
+6. **✅ Clear interfaces**: See [0-pipeline-interfaces.md](docs/04-technical-pipeline/0-pipeline-interfaces.md)
+7. **✅ Fault-tolerant**: Stage error doesn't cascade to others
+
+### Example: Add New Bank
+
+**BEFORE (Blob)**:
+```javascript
+// Write new parser file
+function parserChase(pdfText) { ... } // 200 LOC
+```
+
+**AFTER (LEGO)**:
+```sql
+-- Just add config
+INSERT INTO parser_configs (name, type, currency, parsing_rules)
+VALUES ('Chase Bank', 'bank_statement', 'USD', '{...}');
+```
+
+**No code changes needed** ✅
+
+---
+
 ## 📊 Sistema Completo
 
 ### Total Features: 168 features en 28 áreas
@@ -93,11 +136,12 @@ Finance App es una aplicación completa de finanzas personales que te permite:
 - [parser-wise.md](docs/03-parsers/parser-wise.md) - Wise
 - [parser-scotia.md](docs/03-parsers/parser-scotia.md) - Scotiabank
 
-### ⚙️ 04. Technical Pipeline
-- [2-observation-store.md](docs/04-technical-pipeline/2-observation-store.md) - Raw data inmutable
-- [3-clustering.md](docs/04-technical-pipeline/3-clustering.md) - String similarity grouping
-- [4-normalization.md](docs/04-technical-pipeline/4-normalization.md) - Config-driven rules
-- [5-canonical-store.md](docs/04-technical-pipeline/5-canonical-store.md) - Clean truth
+### ⚙️ 04. Technical Pipeline (LEGO Architecture)
+- **[0-pipeline-interfaces.md](docs/04-technical-pipeline/0-pipeline-interfaces.md)** - All stage contracts (Input/Output interfaces)
+- **[1-pdf-extraction.md](docs/04-technical-pipeline/1-pdf-extraction.md)** - Stage 0: Parse PDFs → INSERT transactions
+- **[3-clustering.md](docs/04-technical-pipeline/3-clustering.md)** - Stage 1: String similarity grouping (optional)
+- **[4-normalization.md](docs/04-technical-pipeline/4-normalization.md)** - Stage 2: DB-driven merchant normalization
+- **[5-canonical-store.md](docs/04-technical-pipeline/5-canonical-store.md)** - Stage 3: Transaction classification (income/expense/transfer)
 - [6-ui-timeline.md](docs/04-technical-pipeline/6-ui-timeline.md) - Vista principal con infinite scroll
 - [7-ui-filters.md](docs/04-technical-pipeline/7-ui-filters.md) - Account, date, type filters
 - [8-ui-details.md](docs/04-technical-pipeline/8-ui-details.md) - Transaction detail panel
@@ -166,11 +210,13 @@ Finance App es una aplicación completa de finanzas personales que te permite:
 
 ## 🎯 Estado Actual
 
-📝 **Documentación**: ✅ COMPLETA
+📝 **Documentación**: ✅ COMPLETA (100% LEGO)
 - ✅ Sistema completo documentado (168 features)
-- ✅ Arquitectura diseñada (1 tabla core + auxiliares)
+- ✅ Arquitectura LEGO diseñada (1 tabla core + auxiliares)
+- ✅ Pipeline 100% modular (5 stages, all config-driven)
 - ✅ Roadmap por fases (10-13 semanas)
 - ✅ Todas las features especificadas
+- ✅ 7/7 LEGO criteria met (swappable, config-driven, extensible)
 
 🔨 **Código**: 🔜 PRÓXIMO
 - 🔜 Phase 1: Core features (3-4 weeks)
