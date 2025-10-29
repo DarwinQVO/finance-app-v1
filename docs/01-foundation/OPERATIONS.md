@@ -14,6 +14,7 @@ Este doc cubre TODOS los casos que no son "agregar features nuevas":
 - ✅ Schema versioning
 - ✅ Parser evolution
 - ✅ Data integrity
+- ✅ **Data invariants & reconciliation** (NEW!)
 - ✅ Backup & restore
 - ✅ Testing strategy
 - ✅ Monitoring & observability
@@ -719,6 +720,446 @@ async function fixDataIntegrity() {
 
 // Run periodically
 setInterval(fixDataIntegrity, 24 * 60 * 60 * 1000); // Daily
+```
+
+---
+
+## 7.5️⃣ Data Invariants & Reconciliation
+
+**QUÉ ES**: Reglas matemáticas o lógicas que SIEMPRE deben cumplirse en tu sistema. Si un invariante falla, significa que hay errores: transacciones faltantes, duplicados, o datos corruptos.
+
+---
+
+### Invariant 1: Balance Reconciliation
+
+**Regla matemática**:
+```
+saldo_inicial + ingresos - gastos = saldo_final
+```
+
+**Aplica cuando**: El PDF del banco incluye saldo inicial y final (BofA, Chase, etc.)
+
+**Ejemplo concreto**:
+```
+BofA Statement - October 2025
+- Saldo inicial:  $1,000.00
+- Ingresos:       $  500.00
+- Gastos:         $  300.00
+- Saldo final:    $1,200.00
+
+Verificación: $1,000 + $500 - $300 = $1,200 ✅ CORRECTO
+```
+
+**Si NO cuadra**:
+```
+❌ Balance mismatch detected!
+Expected: $1,200.00
+Actual:   $1,150.00
+Difference: -$50.00
+
+Posibles causas:
+- Faltó parsear una transacción
+- Duplicado que no se detectó
+- Signo invertido (débito como crédito)
+- Decimal mal procesado ($5.00 → $50.00)
+```
+
+**Implementación (referencia)**:
+```javascript
+async function checkBalanceInvariant(accountId, month) {
+  // 1. Get initial balance from statement metadata
+  const statement = await db.get(`
+    SELECT initial_balance, final_balance
+    FROM statements
+    WHERE account_id = ? AND month = ?
+  `, accountId, month);
+
+  // 2. Calculate from transactions
+  const calculated = await db.get(`
+    SELECT
+      SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) as income,
+      SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) as expense
+    FROM transactions
+    WHERE account_id = ? AND strftime('%Y-%m', date) = ?
+  `, accountId, month);
+
+  const expected = statement.initial_balance + calculated.income - calculated.expense;
+  const actual = statement.final_balance;
+  const diff = Math.abs(expected - actual);
+
+  if (diff > 0.01) { // Tolerance for floating point
+    console.error(`❌ Balance mismatch: ${accountId} ${month}`);
+    console.error(`Expected: $${expected.toFixed(2)}`);
+    console.error(`Actual: $${actual.toFixed(2)}`);
+    console.error(`Difference: $${diff.toFixed(2)}`);
+
+    // Alert user
+    await createAlert({
+      type: 'BALANCE_MISMATCH',
+      severity: 'HIGH',
+      accountId,
+      month,
+      difference: diff
+    });
+  }
+}
+```
+
+---
+
+### Invariant 2: Transfer Balance
+
+**Regla matemática**:
+```
+Σ(transfer debits) = Σ(transfer credits)
+```
+
+**Ejemplo concreto**:
+```
+Transfer: BofA → Apple Card ($500)
+- BofA:       -$500.00 (debit)
+- Apple Card: +$500.00 (credit)
+
+Verificación: |-$500| = |+$500| ✅ CORRECTO
+```
+
+**Si NO cuadra**:
+```
+❌ Unbalanced transfers detected!
+Debit total:  $500.00
+Credit total: $450.00
+Missing:      $50.00
+
+Posibles causas:
+- Transfer fee no detectado como fee separado
+- Una parte del par no se parseó
+- Monedas diferentes sin conversión
+```
+
+**Implementación (referencia)**:
+```javascript
+async function checkTransferInvariant() {
+  const result = await db.get(`
+    SELECT
+      SUM(CASE WHEN amount < 0 THEN ABS(amount) ELSE 0 END) as debit_total,
+      SUM(CASE WHEN amount > 0 THEN amount ELSE 0 END) as credit_total
+    FROM transactions
+    WHERE type = 'transfer'
+  `);
+
+  const diff = Math.abs(result.debit_total - result.credit_total);
+
+  if (diff > 0.01) {
+    console.error(`❌ Transfer imbalance: $${diff.toFixed(2)}`);
+
+    // Find unlinked transfers
+    const unlinked = await db.all(`
+      SELECT * FROM transactions
+      WHERE type = 'transfer'
+      AND (transfer_pair_id IS NULL
+           OR transfer_pair_id NOT IN (SELECT id FROM transactions))
+    `);
+
+    console.log(`Found ${unlinked.length} unlinked transfers`);
+  }
+}
+```
+
+---
+
+### Invariant 3: Parse Completeness
+
+**Regla matemática**:
+```
+filas_en_PDF = filas_guardadas + filas_rechazadas
+```
+
+**Ejemplo concreto**:
+```
+BofA PDF - October 2025
+- Total lines in PDF: 127
+- Transactions saved:  120
+- Rejected/ignored:      7
+  - 3 pending (no balance yet)
+  - 2 headers/footers
+  - 2 malformed lines
+
+Verificación: 127 = 120 + 7 ✅ CORRECTO
+```
+
+**Si NO cuadra**:
+```
+❌ Parse completeness check failed!
+PDF lines:        127
+Saved:            115
+Rejected:           5
+Missing:            7  ← PROBLEMA
+
+Acción: Re-parse PDF con logging detallado
+```
+
+**Implementación (referencia)**:
+```javascript
+async function parseWithCompleteness(pdfPath, accountId) {
+  const lines = await extractPDFLines(pdfPath);
+  const stats = {
+    total: lines.length,
+    saved: 0,
+    rejected: 0,
+    rejectionReasons: {}
+  };
+
+  for (const line of lines) {
+    try {
+      const parsed = parseLine(line);
+
+      if (shouldReject(parsed)) {
+        stats.rejected++;
+        const reason = getRejectionReason(parsed);
+        stats.rejectionReasons[reason] = (stats.rejectionReasons[reason] || 0) + 1;
+        continue;
+      }
+
+      await saveTransaction(parsed, accountId);
+      stats.saved++;
+
+    } catch (error) {
+      stats.rejected++;
+      stats.rejectionReasons['parse_error'] = (stats.rejectionReasons['parse_error'] || 0) + 1;
+    }
+  }
+
+  // Verify invariant
+  if (stats.total !== stats.saved + stats.rejected) {
+    console.error(`❌ Parse completeness failed!`);
+    console.error(`Total: ${stats.total}, Saved: ${stats.saved}, Rejected: ${stats.rejected}`);
+    console.error(`Missing: ${stats.total - stats.saved - stats.rejected}`);
+  }
+
+  // Save stats for audit trail
+  await db.run(`
+    INSERT INTO parse_stats (pdf_path, account_id, total_lines, saved, rejected, stats_json)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `, pdfPath, accountId, stats.total, stats.saved, stats.rejected, JSON.stringify(stats));
+
+  return stats;
+}
+```
+
+---
+
+### Invariant 4: Count Reconciliation by Period
+
+**Regla matemática**:
+```
+transacciones_esperadas ≈ transacciones_actuales (±tolerance)
+```
+
+**Ejemplo concreto**:
+```
+Darwin típicamente tiene:
+- BofA:       40-50 transacciones/mes
+- Apple Card: 30-40 transacciones/mes
+- Wise:       10-15 transacciones/mes
+
+Octubre 2025:
+- BofA:       48 ✅ (en rango)
+- Apple Card: 12 ❌ (muy bajo, esperaba 30-40)
+- Wise:       11 ✅ (en rango)
+
+Alerta: "Apple Card Oct 2025: Only 12 transactions (expected 30-40). PDF incomplete?"
+```
+
+**Implementación (referencia)**:
+```javascript
+async function checkCountInvariant(accountId, month) {
+  // Get historical average
+  const avg = await db.get(`
+    SELECT AVG(count) as avg_count
+    FROM (
+      SELECT COUNT(*) as count
+      FROM transactions
+      WHERE account_id = ?
+      GROUP BY strftime('%Y-%m', date)
+    )
+  `, accountId);
+
+  // Get current month count
+  const current = await db.get(`
+    SELECT COUNT(*) as count
+    FROM transactions
+    WHERE account_id = ? AND strftime('%Y-%m', date) = ?
+  `, accountId, month);
+
+  const tolerance = 0.5; // 50% tolerance
+  const expectedMin = avg.avg_count * (1 - tolerance);
+  const expectedMax = avg.avg_count * (1 + tolerance);
+
+  if (current.count < expectedMin) {
+    console.warn(`⚠️ Low transaction count for ${accountId} ${month}`);
+    console.warn(`Expected: ${expectedMin.toFixed(0)}-${expectedMax.toFixed(0)}`);
+    console.warn(`Actual: ${current.count}`);
+
+    await createAlert({
+      type: 'LOW_TRANSACTION_COUNT',
+      severity: 'MEDIUM',
+      accountId,
+      month,
+      expected: avg.avg_count,
+      actual: current.count
+    });
+  }
+}
+```
+
+---
+
+### Invariant 5: Timeline Completeness (Gap Detection)
+
+**Regla lógica**:
+```
+No deben haber gaps > threshold en el timeline
+```
+
+**Ejemplo concreto**:
+```
+Timeline esperado:
+Jan 2025: ✅ 45 txns
+Feb 2025: ✅ 48 txns
+Mar 2025: ❌ 0 txns   ← GAP!
+Apr 2025: ✅ 52 txns
+May 2025: ✅ 47 txns
+
+Alerta: "Gap detected: BofA missing March 2025 statement"
+```
+
+**Implementación (referencia)**:
+```javascript
+async function checkTimelineGaps(accountId) {
+  const gaps = await db.all(`
+    WITH months AS (
+      SELECT DISTINCT strftime('%Y-%m', date) as month
+      FROM transactions
+      WHERE account_id = ?
+      ORDER BY month
+    ),
+    gaps AS (
+      SELECT
+        month as start_month,
+        LEAD(month) OVER (ORDER BY month) as next_month,
+        CAST((julianday(LEAD(month) OVER (ORDER BY month) || '-01') -
+              julianday(month || '-01')) / 30 AS INTEGER) as months_diff
+      FROM months
+    )
+    SELECT * FROM gaps
+    WHERE months_diff > 1  -- Gap greater than 1 month
+  `, accountId);
+
+  if (gaps.length > 0) {
+    console.error(`❌ Timeline gaps detected for ${accountId}:`);
+    for (const gap of gaps) {
+      console.error(`Gap between ${gap.start_month} and ${gap.next_month} (${gap.months_diff} months)`);
+
+      await createAlert({
+        type: 'TIMELINE_GAP',
+        severity: 'HIGH',
+        accountId,
+        startMonth: gap.start_month,
+        endMonth: gap.next_month,
+        gapSize: gap.months_diff
+      });
+    }
+  }
+}
+```
+
+---
+
+### Alert & Monitoring System
+
+**Cuándo alertar**:
+
+| Invariant | Threshold | Severity |
+|-----------|-----------|----------|
+| Balance mismatch | > $1.00 | 🔴 HIGH |
+| Transfer imbalance | > $0.50 | 🔴 HIGH |
+| Parse completeness | Missing > 5% | 🟡 MEDIUM |
+| Count reconciliation | < 50% expected | 🟡 MEDIUM |
+| Timeline gap | > 1 month | 🔴 HIGH |
+
+**Implementación (referencia)**:
+```javascript
+async function runAllInvariants() {
+  console.log('Running data invariant checks...');
+
+  const accounts = await db.all('SELECT id FROM accounts');
+
+  for (const account of accounts) {
+    // Run all checks
+    await checkBalanceInvariant(account.id, getCurrentMonth());
+    await checkCountInvariant(account.id, getCurrentMonth());
+    await checkTimelineGaps(account.id);
+  }
+
+  await checkTransferInvariant();
+
+  console.log('✅ Invariant checks complete');
+}
+
+// Run daily
+setInterval(runAllInvariants, 24 * 60 * 60 * 1000);
+
+// Also run after each PDF upload
+app.on('pdf_processed', async () => {
+  await runAllInvariants();
+});
+```
+
+---
+
+### Audit Trail
+
+**Guardar resultados de cada check**:
+```sql
+CREATE TABLE invariant_checks (
+  id TEXT PRIMARY KEY,
+  check_type TEXT NOT NULL,  -- 'balance', 'transfer', 'parse', 'count', 'gap'
+  status TEXT NOT NULL,      -- 'pass', 'fail'
+  account_id TEXT,
+  period TEXT,
+  expected_value REAL,
+  actual_value REAL,
+  difference REAL,
+  details TEXT,              -- JSON con info adicional
+  checked_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_invariant_checks_status ON invariant_checks(status);
+CREATE INDEX idx_invariant_checks_type ON invariant_checks(check_type);
+```
+
+**Dashboard view**:
+```sql
+-- Ver últimos fallos
+SELECT
+  check_type,
+  account_id,
+  period,
+  difference,
+  checked_at
+FROM invariant_checks
+WHERE status = 'fail'
+ORDER BY checked_at DESC
+LIMIT 20;
+
+-- Ver tasa de éxito por tipo
+SELECT
+  check_type,
+  COUNT(*) as total,
+  SUM(CASE WHEN status = 'pass' THEN 1 ELSE 0 END) as passed,
+  ROUND(100.0 * SUM(CASE WHEN status = 'pass' THEN 1 ELSE 0 END) / COUNT(*), 2) as success_rate
+FROM invariant_checks
+GROUP BY check_type;
 ```
 
 ---
