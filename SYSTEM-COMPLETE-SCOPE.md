@@ -1,15 +1,21 @@
-# Finance App - Sistema Completo (Scope Total)
+# Finance App - Build Plan (168 Features)
 
-**Documentación de TODAS las features que el sistema necesita**
+**⚠️ IMPORTANTE**: Este doc organiza features por ORDEN DE CONSTRUCCIÓN, NO define el sistema.
+
+**Para ver QUÉ ES el sistema completo**: Lee [SYSTEM-OVERVIEW.md](SYSTEM-OVERVIEW.md)
+
+**Este doc**: Plan de cómo CONSTRUIR esas 18 capacidades en 4 fases incrementales.
 
 ---
 
-## 🎯 Filosofía
+## 🎯 Filosofía del Build
 
-✅ **Simple pero completo** - No over-engineering, pero tampoco limitante
-✅ **Arquitectura escalable** - Decisiones de hoy no bloquean mañana
-✅ **Build incremental** - Construir en fases, documentar todo ahora
-✅ **Config-driven** - No hardcodear, parametrizar
+✅ **Documentar TODO primero** - Sistema completo definido ANTES de construir
+✅ **Construir incremental** - 4 fases, cada una entrega valor usable
+✅ **Arquitectura correcta desde inicio** - Todos los campos existen desde Phase 1
+✅ **No rewrites** - Phases agregan features, NO cambian core
+
+**Las "Phases" son SOLO construcción, NO versiones del sistema**
 
 ---
 
