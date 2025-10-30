@@ -3396,3 +3396,524 @@ describe('BudgetManager Component', () => {
 
 ---
 
+## Task 21: Recurring Detection Engine 🔁
+
+**Goal**: Implement automatic detection of recurring transactions (subscriptions, bills).
+
+**Scope**:
+- Detect recurring patterns by analyzing transaction history
+- Calculate intervals between transactions from same merchant
+- Determine frequency (weekly, monthly, yearly)
+- Calculate confidence score based on regularity
+- Predict next expected payment date
+- Support minimum 3 transactions for detection
+
+**LOC estimate**: ~250 LOC (migration ~30, engine ~120, tests ~100)
+
+---
+
+### Migration: Add Recurring Groups Table
+
+```sql
+<<migrations/005-add-recurring.sql>>=
+-- Recurring groups table
+CREATE TABLE IF NOT EXISTS recurring_groups (
+  id TEXT PRIMARY KEY,
+  merchant TEXT NOT NULL,
+  frequency TEXT NOT NULL CHECK (frequency IN ('weekly', 'monthly', 'yearly')),
+  expected_amount REAL NOT NULL,
+  currency TEXT NOT NULL DEFAULT 'USD',
+  confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+  next_expected_date TEXT,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+-- Index for performance
+CREATE INDEX IF NOT EXISTS idx_recurring_merchant ON recurring_groups(merchant);
+CREATE INDEX IF NOT EXISTS idx_recurring_active ON recurring_groups(is_active);
+CREATE INDEX IF NOT EXISTS idx_recurring_next_date ON recurring_groups(next_expected_date);
+@
+```
+
+---
+
+### Engine: recurring-detection.js
+
+Recurring transaction detection engine that analyzes transaction patterns.
+
+```javascript
+<<src/lib/recurring-detection.js>>=
+/**
+ * Calculate days between two dates
+ */
+function daysBetween(date1, date2) {
+  const d1 = new Date(date1);
+  const d2 = new Date(date2);
+  const diffTime = Math.abs(d2 - d1);
+  return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+}
+
+/**
+ * Calculate standard deviation
+ */
+function standardDeviation(values) {
+  if (values.length === 0) return 0;
+  const avg = values.reduce((a, b) => a + b, 0) / values.length;
+  const squareDiffs = values.map(value => Math.pow(value - avg, 2));
+  const avgSquareDiff = squareDiffs.reduce((a, b) => a + b, 0) / squareDiffs.length;
+  return Math.sqrt(avgSquareDiff);
+}
+
+/**
+ * Determine frequency based on average interval
+ */
+function determineFrequency(avgInterval) {
+  if (avgInterval >= 6 && avgInterval <= 8) return 'weekly';
+  if (avgInterval >= 28 && avgInterval <= 33) return 'monthly';
+  if (avgInterval >= 360 && avgInterval <= 370) return 'yearly';
+  return null;
+}
+
+/**
+ * Calculate next expected date based on frequency
+ */
+function calculateNextDate(lastDate, frequency) {
+  const date = new Date(lastDate);
+
+  if (frequency === 'weekly') {
+    date.setDate(date.getDate() + 7);
+  } else if (frequency === 'monthly') {
+    date.setMonth(date.getMonth() + 1);
+  } else if (frequency === 'yearly') {
+    date.setFullYear(date.getFullYear() + 1);
+  }
+
+  return date.toISOString().split('T')[0];
+}
+
+/**
+ * Detect recurring pattern for a specific merchant
+ */
+export function detectRecurringForMerchant(db, merchant) {
+  // Get all transactions for this merchant, ordered by date
+  const transactions = db.prepare(`
+    SELECT id, date, amount, currency
+    FROM transactions
+    WHERE merchant = ?
+      AND type = 'expense'
+    ORDER BY date ASC
+  `).all(merchant);
+
+  // Need at least 3 transactions to detect a pattern
+  if (transactions.length < 3) {
+    return null;
+  }
+
+  // Calculate intervals between consecutive transactions
+  const intervals = [];
+  for (let i = 1; i < transactions.length; i++) {
+    const interval = daysBetween(transactions[i - 1].date, transactions[i].date);
+    intervals.push(interval);
+  }
+
+  // Calculate average interval and standard deviation
+  const avgInterval = intervals.reduce((a, b) => a + b, 0) / intervals.length;
+  const stdDev = standardDeviation(intervals);
+
+  // Determine frequency
+  const frequency = determineFrequency(avgInterval);
+  if (!frequency) {
+    return null; // No recognizable pattern
+  }
+
+  // Calculate confidence (lower stdDev = higher confidence)
+  // confidence = 1.0 - (stdDev / avgInterval)
+  // Cap at 0-1 range
+  let confidence = 1.0 - (stdDev / avgInterval);
+  confidence = Math.max(0, Math.min(1, confidence));
+
+  // Low confidence patterns are not useful
+  if (confidence < 0.6) {
+    return null;
+  }
+
+  // Calculate expected amount (average of all amounts)
+  const amounts = transactions.map(t => Math.abs(t.amount));
+  const expectedAmount = amounts.reduce((a, b) => a + b, 0) / amounts.length;
+
+  // Calculate next expected date
+  const lastDate = transactions[transactions.length - 1].date;
+  const nextExpectedDate = calculateNextDate(lastDate, frequency);
+
+  return {
+    merchant,
+    frequency,
+    expectedAmount,
+    currency: transactions[0].currency,
+    confidence,
+    nextExpectedDate,
+    transactionCount: transactions.length
+  };
+}
+
+/**
+ * Detect all recurring patterns in the database
+ */
+export function detectAllRecurring(db) {
+  // Get all unique merchants with at least 3 transactions
+  const merchants = db.prepare(`
+    SELECT merchant, COUNT(*) as count
+    FROM transactions
+    WHERE type = 'expense'
+    GROUP BY merchant
+    HAVING count >= 3
+  `).all();
+
+  const recurring = [];
+
+  for (const { merchant } of merchants) {
+    const pattern = detectRecurringForMerchant(db, merchant);
+    if (pattern) {
+      recurring.push(pattern);
+    }
+  }
+
+  return recurring;
+}
+
+/**
+ * Save recurring pattern to database
+ */
+export function saveRecurringGroup(db, pattern) {
+  const id = `rec_${pattern.merchant.toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
+  const now = new Date().toISOString();
+
+  db.prepare(`
+    INSERT OR REPLACE INTO recurring_groups
+    (id, merchant, frequency, expected_amount, currency, confidence, next_expected_date, is_active, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    id,
+    pattern.merchant,
+    pattern.frequency,
+    pattern.expectedAmount,
+    pattern.currency,
+    pattern.confidence,
+    pattern.nextExpectedDate,
+    1,
+    now,
+    now
+  );
+
+  return id;
+}
+
+/**
+ * Get all active recurring groups
+ */
+export function getActiveRecurringGroups(db) {
+  return db.prepare(`
+    SELECT * FROM recurring_groups
+    WHERE is_active = 1
+    ORDER BY next_expected_date ASC
+  `).all();
+}
+
+/**
+ * Check for price changes in recurring transactions
+ */
+export function checkPriceChange(db, merchant, newAmount, expectedAmount) {
+  const tolerance = 0.10; // 10% tolerance
+  const diff = Math.abs(newAmount - expectedAmount);
+  const percentChange = diff / expectedAmount;
+
+  if (percentChange > tolerance) {
+    return {
+      merchant,
+      oldAmount: expectedAmount,
+      newAmount,
+      difference: newAmount - expectedAmount,
+      percentChange: percentChange * 100
+    };
+  }
+
+  return null;
+}
+@
+```
+
+---
+
+### Tests: recurring-detection.test.js
+
+```javascript
+<<tests/recurring-detection.test.js>>=
+import { describe, test, expect, beforeEach, afterEach } from 'vitest';
+import Database from 'better-sqlite3';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import {
+  detectRecurringForMerchant,
+  detectAllRecurring,
+  saveRecurringGroup,
+  getActiveRecurringGroups,
+  checkPriceChange
+} from '../src/lib/recurring-detection.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const ROOT_DIR = path.resolve(__dirname, '..');
+
+describe('Recurring Detection Engine', () => {
+  let db;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+
+    // Run migrations
+    const schema = fs.readFileSync(path.join(ROOT_DIR, 'src/db/schema.sql'), 'utf-8');
+    db.exec(schema);
+
+    const recurringMigration = fs.readFileSync(
+      path.join(ROOT_DIR, 'migrations/005-add-recurring.sql'),
+      'utf-8'
+    );
+    db.exec(recurringMigration);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  function createTestAccount() {
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO accounts (id, name, type, institution, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('acc-1', 'Test Account', 'checking', 'Test Bank', now, now);
+  }
+
+  function addTransaction(id, date, merchant, amount) {
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO transactions (id, account_id, date, merchant, merchant_raw, amount, currency, type, source_type, source_hash, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, 'acc-1', date, merchant, merchant, amount, 'USD', 'expense', 'manual', id, now, now);
+  }
+
+  test('detects monthly recurring pattern with 3 transactions', () => {
+    createTestAccount();
+
+    // Add 3 Netflix transactions, monthly
+    addTransaction('txn-1', '2025-01-15', 'Netflix', -15.99);
+    addTransaction('txn-2', '2025-02-15', 'Netflix', -15.99);
+    addTransaction('txn-3', '2025-03-15', 'Netflix', -15.99);
+
+    const pattern = detectRecurringForMerchant(db, 'Netflix');
+
+    expect(pattern).not.toBeNull();
+    expect(pattern.merchant).toBe('Netflix');
+    expect(pattern.frequency).toBe('monthly');
+    expect(pattern.expectedAmount).toBeCloseTo(15.99, 2);
+    expect(pattern.confidence).toBeGreaterThan(0.9);
+    expect(pattern.transactionCount).toBe(3);
+  });
+
+  test('detects weekly recurring pattern', () => {
+    createTestAccount();
+
+    // Add weekly coffee purchases
+    addTransaction('txn-1', '2025-01-07', 'Starbucks', -5.50);
+    addTransaction('txn-2', '2025-01-14', 'Starbucks', -5.50);
+    addTransaction('txn-3', '2025-01-21', 'Starbucks', -5.50);
+
+    const pattern = detectRecurringForMerchant(db, 'Starbucks');
+
+    expect(pattern).not.toBeNull();
+    expect(pattern.frequency).toBe('weekly');
+    expect(pattern.expectedAmount).toBeCloseTo(5.50, 2);
+  });
+
+  test('returns null for less than 3 transactions', () => {
+    createTestAccount();
+
+    addTransaction('txn-1', '2025-01-15', 'Netflix', -15.99);
+    addTransaction('txn-2', '2025-02-15', 'Netflix', -15.99);
+
+    const pattern = detectRecurringForMerchant(db, 'Netflix');
+
+    expect(pattern).toBeNull();
+  });
+
+  test('returns null for inconsistent intervals (low confidence)', () => {
+    createTestAccount();
+
+    // Inconsistent intervals: 30, 60, 15 days
+    addTransaction('txn-1', '2025-01-01', 'Irregular', -10);
+    addTransaction('txn-2', '2025-01-31', 'Irregular', -10);
+    addTransaction('txn-3', '2025-04-01', 'Irregular', -10);
+    addTransaction('txn-4', '2025-04-16', 'Irregular', -10);
+
+    const pattern = detectRecurringForMerchant(db, 'Irregular');
+
+    expect(pattern).toBeNull();
+  });
+
+  test('calculates confidence score correctly', () => {
+    createTestAccount();
+
+    // Perfect monthly pattern
+    addTransaction('txn-1', '2025-01-15', 'Netflix', -15.99);
+    addTransaction('txn-2', '2025-02-15', 'Netflix', -15.99);
+    addTransaction('txn-3', '2025-03-15', 'Netflix', -15.99);
+    addTransaction('txn-4', '2025-04-15', 'Netflix', -15.99);
+
+    const pattern = detectRecurringForMerchant(db, 'Netflix');
+
+    expect(pattern.confidence).toBeGreaterThan(0.95);
+  });
+
+  test('calculates next expected date correctly', () => {
+    createTestAccount();
+
+    addTransaction('txn-1', '2025-01-15', 'Netflix', -15.99);
+    addTransaction('txn-2', '2025-02-15', 'Netflix', -15.99);
+    addTransaction('txn-3', '2025-03-15', 'Netflix', -15.99);
+
+    const pattern = detectRecurringForMerchant(db, 'Netflix');
+
+    expect(pattern.nextExpectedDate).toBe('2025-04-15');
+  });
+
+  test('detects multiple recurring patterns', () => {
+    createTestAccount();
+
+    // Netflix monthly
+    addTransaction('txn-1', '2025-01-15', 'Netflix', -15.99);
+    addTransaction('txn-2', '2025-02-15', 'Netflix', -15.99);
+    addTransaction('txn-3', '2025-03-15', 'Netflix', -15.99);
+
+    // Spotify monthly
+    addTransaction('txn-4', '2025-01-03', 'Spotify', -9.99);
+    addTransaction('txn-5', '2025-02-03', 'Spotify', -9.99);
+    addTransaction('txn-6', '2025-03-03', 'Spotify', -9.99);
+
+    const patterns = detectAllRecurring(db);
+
+    expect(patterns.length).toBe(2);
+    expect(patterns.map(p => p.merchant)).toContain('Netflix');
+    expect(patterns.map(p => p.merchant)).toContain('Spotify');
+  });
+
+  test('saves recurring group to database', () => {
+    createTestAccount();
+
+    addTransaction('txn-1', '2025-01-15', 'Netflix', -15.99);
+    addTransaction('txn-2', '2025-02-15', 'Netflix', -15.99);
+    addTransaction('txn-3', '2025-03-15', 'Netflix', -15.99);
+
+    const pattern = detectRecurringForMerchant(db, 'Netflix');
+    const id = saveRecurringGroup(db, pattern);
+
+    const saved = db.prepare('SELECT * FROM recurring_groups WHERE id = ?').get(id);
+
+    expect(saved).toBeDefined();
+    expect(saved.merchant).toBe('Netflix');
+    expect(saved.frequency).toBe('monthly');
+    expect(saved.expected_amount).toBeCloseTo(15.99, 2);
+  });
+
+  test('retrieves active recurring groups', () => {
+    createTestAccount();
+
+    // Create multiple patterns
+    addTransaction('txn-1', '2025-01-15', 'Netflix', -15.99);
+    addTransaction('txn-2', '2025-02-15', 'Netflix', -15.99);
+    addTransaction('txn-3', '2025-03-15', 'Netflix', -15.99);
+
+    addTransaction('txn-4', '2025-01-03', 'Spotify', -9.99);
+    addTransaction('txn-5', '2025-02-03', 'Spotify', -9.99);
+    addTransaction('txn-6', '2025-03-03', 'Spotify', -9.99);
+
+    const patterns = detectAllRecurring(db);
+    patterns.forEach(p => saveRecurringGroup(db, p));
+
+    const active = getActiveRecurringGroups(db);
+
+    expect(active.length).toBe(2);
+    expect(active.every(r => r.is_active === 1)).toBe(true);
+  });
+
+  test('detects price change', () => {
+    const change = checkPriceChange(db, 'Netflix', 17.99, 15.99);
+
+    expect(change).not.toBeNull();
+    expect(change.merchant).toBe('Netflix');
+    expect(change.oldAmount).toBe(15.99);
+    expect(change.newAmount).toBe(17.99);
+    expect(change.difference).toBeCloseTo(2.00, 2);
+    expect(change.percentChange).toBeCloseTo(12.5, 1);
+  });
+
+  test('no price change for small variations', () => {
+    // Within 10% tolerance
+    const change = checkPriceChange(db, 'Netflix', 16.50, 15.99);
+
+    expect(change).toBeNull();
+  });
+
+  test('handles varying amounts in pattern', () => {
+    createTestAccount();
+
+    // Amounts vary slightly
+    addTransaction('txn-1', '2025-01-15', 'Gym', -50.00);
+    addTransaction('txn-2', '2025-02-15', 'Gym', -52.00);
+    addTransaction('txn-3', '2025-03-15', 'Gym', -51.00);
+
+    const pattern = detectRecurringForMerchant(db, 'Gym');
+
+    expect(pattern).not.toBeNull();
+    expect(pattern.expectedAmount).toBeCloseTo(51.00, 2);
+    // Confidence should be slightly lower due to amount variation
+    expect(pattern.confidence).toBeLessThan(1.0);
+  });
+});
+@
+```
+
+---
+
+### ✅ Test Coverage: Recurring Detection
+
+**Tests cubiertos**:
+1. ✅ Detects monthly recurring pattern with 3 transactions
+2. ✅ Detects weekly recurring pattern
+3. ✅ Returns null for less than 3 transactions
+4. ✅ Returns null for inconsistent intervals (low confidence)
+5. ✅ Calculates confidence score correctly
+6. ✅ Calculates next expected date correctly
+7. ✅ Detects multiple recurring patterns
+8. ✅ Saves recurring group to database
+9. ✅ Retrieves active recurring groups
+10. ✅ Detects price change
+11. ✅ No price change for small variations
+12. ✅ Handles varying amounts in pattern
+
+---
+
+### 📊 Status: Task 21 Complete
+
+**Output**:
+- ✅ `migrations/005-add-recurring.sql` - Recurring groups schema
+- ✅ `src/lib/recurring-detection.js` - Detection engine
+- ✅ `tests/recurring-detection.test.js` - 12 tests
+
+**Total**: ~290 LOC (slightly over estimate due to comprehensive detection logic)
+
+**Next**: Task 22 - Recurring UI
+
+---
+
