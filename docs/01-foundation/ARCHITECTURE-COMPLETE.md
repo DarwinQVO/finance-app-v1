@@ -128,9 +128,17 @@ CREATE TABLE transactions (
   account_id TEXT NOT NULL,         -- FK a accounts table
   date TEXT NOT NULL,               -- ISO: 2025-10-28
   merchant TEXT NOT NULL,           -- Normalizado: "Starbucks"
+  merchant_raw_full TEXT,           -- Raw description completa con metadata (Phase 1)
   amount REAL NOT NULL,             -- -5.67 (negativo = gasto)
   currency TEXT NOT NULL,           -- USD | MXN | EUR
   type TEXT NOT NULL,               -- expense | income | transfer
+
+  -- ==========================================
+  -- MULTI-CURRENCY (Phase 1 - Edge Case #2)
+  -- ==========================================
+  amount_original REAL,             -- Monto en moneda original (e.g., 1900.00 MXN)
+  currency_original TEXT,           -- Moneda original (MXN cuando currency=USD)
+  exchange_rate REAL,               -- Rate usado (e.g., 19.487 MXN/USD)
 
   -- ==========================================
   -- CATEGORIZATION (Phase 2)
@@ -138,6 +146,7 @@ CREATE TABLE transactions (
   category_id TEXT,                 -- FK a categories table
   subcategory_id TEXT,              -- FK a categories table
   tags TEXT,                        -- JSON array: ["coffee", "work"]
+  bank_provided_category TEXT,      -- Category del banco (reference only)
 
   -- ==========================================
   -- SOURCE METADATA (auditoría)
@@ -147,6 +156,7 @@ CREATE TABLE transactions (
   source_hash TEXT,                 -- SHA256 para dedup
   original_description TEXT,        -- ✅ Raw del source
   original_line_number INTEGER,
+  bank_transaction_id TEXT,         -- ID del banco (reference only)
 
   -- ==========================================
   -- USER CUSTOMIZATION
@@ -163,16 +173,65 @@ CREATE TABLE transactions (
   confidence REAL,                  -- 0.0-1.0
   normalization_rule_id TEXT,       -- Qué regla aplicó
   cluster_id TEXT,                  -- ID del cluster
+  metadata TEXT,                    -- JSON para metadata estructurada del banco
 
   -- ==========================================
   -- RELATIONSHIPS
   -- ==========================================
   transfer_pair_id TEXT,            -- Link a otra transaction (transfer)
+  transfer_detection_confidence REAL, -- 0.0-1.0 confidence del transfer detection
   recurring_group_id TEXT,          -- Link a recurring_groups table (optional - Phase 2)
   receivable_id TEXT,               -- Link a receivables table (cuando es pago de invoice)
   split_parent_id TEXT,             -- Si es parte de split transaction
-  refund_link_id TEXT,              -- Link a original transaction if this is a refund (Phase 2)
-  pending_link_id TEXT,             -- Link pending → posted transaction (Phase 1)
+  refund_link_id TEXT,              -- DEPRECATED - usar refund_of_transaction_id
+  refund_of_transaction_id TEXT,    -- Link al charge original si esto es refund (Phase 2)
+  pending_link_id TEXT,             -- DEPRECATED - usar pending → posted flow
+
+  -- ==========================================
+  -- FEES (Phase 1 - Edge Case #7)
+  -- ==========================================
+  foreign_fee_transaction_id TEXT,  -- Link a fee transaction separada
+  is_fee_for_transaction_id TEXT,   -- Este txn es fee de otro txn
+
+  -- ==========================================
+  -- REVERSALS & ADJUSTMENTS (Phase 1 - Edge Case #5)
+  -- ==========================================
+  is_reversal BOOLEAN DEFAULT FALSE,    -- Banco canceló pending charge
+  is_adjustment BOOLEAN DEFAULT FALSE,  -- Corrección posterior
+  is_refund BOOLEAN DEFAULT FALSE,      -- Merchant devolvió dinero
+  reversal_of_transaction_id TEXT,      -- Link al txn original reversed
+
+  -- ==========================================
+  -- INSTALLMENTS (Phase 2 - Edge Case #15)
+  -- ==========================================
+  installment_current INTEGER,      -- e.g., 22
+  installment_total INTEGER,        -- e.g., 24
+  installment_group_id TEXT,        -- Link installments together
+
+  -- ==========================================
+  -- INTEREST (Phase 1 - Edge Case #13)
+  -- ==========================================
+  interest_type TEXT,               -- 'purchases' | 'cash-advance' | 'balance-transfer' | 'general'
+
+  -- ==========================================
+  -- CASH ADVANCES (Phase 1 - Edge Case #14)
+  -- ==========================================
+  is_cash_advance BOOLEAN DEFAULT FALSE,
+  cash_advance_fee REAL,            -- Fee charged for cash advance
+
+  -- ==========================================
+  -- TAX INFO - MEXICO (Phase 1 - Edge Case #21)
+  -- ==========================================
+  rfc TEXT,                         -- RFC del merchant (Mexico tax ID)
+  iva_amount REAL,                  -- IVA amount (Mexico VAT)
+  folio_rastreo TEXT,               -- SPEI tracking number
+  numero_referencia TEXT,           -- Reference number
+
+  -- ==========================================
+  -- ACCOUNT LINKING (Phase 1 - Edge Case #20)
+  -- ==========================================
+  linked_account_identifier TEXT,   -- e.g., "5226" (last 4) or CLABE
+  linked_account_type TEXT,         -- 'last-4' | 'clabe' | 'iban' | 'routing-account'
 
   -- ==========================================
   -- BUDGETS & TAX (Phase 2-3)
@@ -190,12 +249,15 @@ CREATE TABLE transactions (
   is_pending BOOLEAN DEFAULT FALSE,
   is_reconciled BOOLEAN DEFAULT FALSE,
   is_tax_deductible BOOLEAN DEFAULT FALSE,
+  is_internal_transfer BOOLEAN DEFAULT FALSE,  -- Wise "Added money" type
 
   status TEXT DEFAULT 'posted',     -- pending | posted | cancelled (Phase 1)
   status_changed_at TEXT,           -- When status changed from pending → posted
 
   refund_status TEXT,               -- NULL | 'original' | 'refund' | 'disputed' (Phase 2)
   refund_amount REAL,               -- Amount of refund if partial
+
+  bank_reported_balance REAL,       -- Balance reportado por banco (validation)
 
   -- ==========================================
   -- TIMESTAMPS
@@ -206,13 +268,18 @@ CREATE TABLE transactions (
   updated_at TEXT NOT NULL,
 
   -- ==========================================
-  -- INDEXES
+  -- FOREIGN KEYS
   -- ==========================================
   FOREIGN KEY (account_id) REFERENCES accounts(id),
   FOREIGN KEY (category_id) REFERENCES categories(id),
-  FOREIGN KEY (user_id) REFERENCES users(id)
+  FOREIGN KEY (user_id) REFERENCES users(id),
+  FOREIGN KEY (normalization_rule_id) REFERENCES normalization_rules(id),
+  FOREIGN KEY (recurring_group_id) REFERENCES recurring_groups(id)
 );
 
+-- ==========================================
+-- INDEXES (optimizados para queries comunes)
+-- ==========================================
 CREATE INDEX idx_transactions_account ON transactions(account_id);
 CREATE INDEX idx_transactions_date ON transactions(date);
 CREATE INDEX idx_transactions_merchant ON transactions(merchant);
@@ -221,6 +288,9 @@ CREATE INDEX idx_transactions_type ON transactions(type);
 CREATE INDEX idx_transactions_user ON transactions(user_id);
 CREATE INDEX idx_transactions_source_hash ON transactions(source_hash);
 CREATE INDEX idx_transactions_recurring ON transactions(recurring_group_id);
+CREATE INDEX idx_transactions_pending ON transactions(is_pending) WHERE is_pending = TRUE;
+CREATE INDEX idx_transactions_transfer_pair ON transactions(transfer_pair_id);
+CREATE INDEX idx_transactions_reversal ON transactions(is_reversal) WHERE is_reversal = TRUE;
 ```
 
 **Por qué 1 tabla es suficiente:**
@@ -245,7 +315,7 @@ CREATE TABLE accounts (
 
   name TEXT NOT NULL,               -- "Bank of America Checking"
   bank TEXT NOT NULL,               -- "bofa" (ID del parser config)
-  account_type TEXT NOT NULL,       -- checking | savings | credit_card | investment
+  type TEXT NOT NULL DEFAULT 'checking', -- checking | savings | credit_card | investment (Edge Case #9)
 
   currency TEXT NOT NULL,           -- Default currency
   color TEXT,                       -- UI color
@@ -254,9 +324,11 @@ CREATE TABLE accounts (
   balance_current REAL,             -- Balance actual (opcional)
   balance_last_updated TEXT,
 
-  -- Credit Card specific fields
+  -- Credit Card specific fields (Edge Case #14)
   credit_limit REAL,                -- Límite de crédito (solo para credit_card)
   payment_due_date TEXT,            -- Fecha de vencimiento del pago
+  apr_purchases REAL,               -- APR for purchases (Edge Case #13)
+  apr_cash_advance REAL,            -- APR for cash advances (Edge Case #14)
 
   is_active BOOLEAN DEFAULT TRUE,
   group_name TEXT,                  -- Para agrupar (e.g., "Personal", "Business")
@@ -264,6 +336,9 @@ CREATE TABLE accounts (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+-- Index for filtering by account type
+CREATE INDEX idx_accounts_type ON accounts(type);
 ```
 
 ---
@@ -501,6 +576,44 @@ INSERT INTO normalization_rules VALUES
   -- ... más rules
 ;
 ```
+
+---
+
+#### `rfc_registry` (Phase 1 - Mexico Tax IDs - Edge Case #21)
+
+**Registry de RFCs (Mexico tax IDs) para auto-completar merchant names**
+
+```sql
+CREATE TABLE rfc_registry (
+  rfc TEXT PRIMARY KEY,             -- RFC del merchant (12-13 chars)
+  merchant_name TEXT NOT NULL,      -- Nombre del merchant
+  merchant_type TEXT,               -- 'restaurant' | 'retail' | 'utility' | 'service' | etc
+  verified BOOLEAN DEFAULT FALSE,   -- User-verified vs auto-detected
+
+  times_seen INTEGER DEFAULT 1,     -- Cuántas veces apareció este RFC
+  last_seen_at TEXT,
+
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX idx_rfc_merchant ON rfc_registry(merchant_name);
+
+-- Examples (pre-populated - common Mexican merchants)
+INSERT INTO rfc_registry VALUES
+  ('UPM200220LK5', 'Uber', 'service', TRUE, 0, NULL, '2025-01-01'),
+  ('UPM191014S31', 'Uber Eats', 'service', TRUE, 0, NULL, '2025-01-01'),
+  ('CSI020226MV4', 'Starbucks', 'restaurant', TRUE, 0, NULL, '2025-01-01'),
+  ('MAX0611157H8', 'GNC', 'retail', TRUE, 0, NULL, '2025-01-01'),
+  ('SAT8410245V8', 'SAT (Impuestos)', 'government', TRUE, 0, NULL, '2025-01-01'),
+  ('CNM980114PI2', 'CFE (Luz)', 'utility', TRUE, 0, NULL, '2025-01-01')
+;
+```
+
+**Uso**:
+- Scotiabank incluye RFC en cada transacción
+- Si RFC ya está en registry → auto-completar merchant
+- Si RFC nuevo → agregar a registry + user puede verificar
+- Ayuda con normalización automática
 
 ---
 
@@ -792,6 +905,82 @@ Export to PDF/CSV
 | **Total Desktop** | **~3,100** |
 
 **Simple pero completo. Escalable pero no over-engineered.**
+
+---
+
+## 📝 Actualizaciones del Schema (Oct 30, 2025)
+
+**Versión 2.0** - Schema actualizado para soportar **TODOS los edge cases** encontrados en datos reales.
+
+### Campos Agregados
+
+**Tabla `transactions`** - 25+ campos nuevos:
+
+1. **Multi-currency** (Edge Case #2):
+   - `amount_original`, `currency_original`, `exchange_rate`
+   - Soporta transacciones en moneda extranjera con conversión
+
+2. **Fees** (Edge Case #7):
+   - `foreign_fee_transaction_id`, `is_fee_for_transaction_id`
+   - Links fees a transacciones principales
+
+3. **Reversals & Adjustments** (Edge Case #5):
+   - `is_reversal`, `is_adjustment`, `is_refund`, `reversal_of_transaction_id`
+   - Maneja cancelaciones, correcciones y refunds
+
+4. **Installments** (Edge Case #15):
+   - `installment_current`, `installment_total`, `installment_group_id`
+   - Tracking de pagos en cuotas
+
+5. **Interest & Cash Advances** (Edge Case #13, #14):
+   - `interest_type`, `is_cash_advance`, `cash_advance_fee`
+   - Diferencia tipos de interest charges
+
+6. **Tax Info - México** (Edge Case #21):
+   - `rfc`, `iva_amount`, `folio_rastreo`, `numero_referencia`
+   - Soporta SPEI, Cobranzas Domiciliadas, RFC registry
+
+7. **Metadata** (Edge Case #22):
+   - `metadata` (JSON), `merchant_raw_full`, `bank_transaction_id`
+   - Preserva toda la metadata del banco
+
+8. **Account Linking** (Edge Case #20):
+   - `linked_account_identifier`, `linked_account_type`
+   - Detecta transferencias entre cuentas propias
+
+9. **Validation** (Edge Case #18):
+   - `bank_reported_balance`
+   - Valida balance calculado vs banco
+
+10. **Detection Confidence** (Edge Case #4):
+    - `transfer_detection_confidence`
+    - Confidence score para transfers detectados
+
+**Tabla `accounts`**:
+- Agregado `type` field (checking | savings | credit_card | investment)
+- Agregado `apr_purchases`, `apr_cash_advance` para credit cards
+
+**Tabla `rfc_registry`** (nueva):
+- Registry de RFCs mexicanos
+- Auto-completa merchant names
+- Ayuda con normalización
+
+### Por Qué Estos Campos Ahora
+
+**Principio**: Schema debe soportar **100% de edge cases desde Phase 1**.
+
+- Algunos campos estarán NULL hasta Phase 2/3
+- Pero el schema NO cambia entre phases
+- NO migrations complejas
+- Código simple: campos existen, solo los poblamos cuando necesario
+
+### Referencia Completa
+
+Ver [EDGE-CASES-COMPLETE.md](./EDGE-CASES-COMPLETE.md) para:
+- Ejemplos reales de cada edge case
+- Estrategias de parsing
+- Código de detección
+- Prioridad de implementación
 
 ---
 
