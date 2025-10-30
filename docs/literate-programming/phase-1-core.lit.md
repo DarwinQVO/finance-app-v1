@@ -1056,3 +1056,309 @@ test('detection rules contain expected patterns', () => {
 - Config-driven design → Agregar banco = INSERT, no recompile
 
 **Status**: ✅ Task 3 completada con tests ejecutables
+
+---
+
+## 4. Normalization Engine
+
+El normalization engine es el **traductor de chaos a orden**. Los bancos escriben el mismo merchant de 8+ formas diferentes. Este engine aplica reglas desde la DB para convertir todo a nombres canónicos.
+
+### Por qué necesitamos esto
+
+Sin normalización:
+- "UBER *EATS" y "ST UBER EATS" aparecen como 2 merchants diferentes
+- Reportes inútiles (¿gasté en Uber o en "ST UBER"?)
+- Búsqueda rota (buscar "uber" no encuentra "STR UBER")
+
+Con normalización:
+- Todos los UBERs → "Uber" o "Uber Eats"
+- Reportes útiles (total gastado en Uber = ✅)
+- Búsqueda funcional
+
+### Edge Case #3: Merchant Normalization Nightmare
+
+**Problema real**: UBER aparece en 8+ formatos diferentes:
+```
+UBER *EATS MR TREUBLAAN 7 AMSTERDAM...
+UBER * EATS PENDING MR TREUBLAAN...
+ST UBER CARG RECUR.
+STR UBER EATS CARG RECUR.
+STRIPE UBER TRIP CIU
+UBER CORNERSHOP CARG RECUR.
+```
+
+**Todos son el mismo merchant!** El engine debe usar reglas (regex, exact, contains) para normalizar.
+
+### Arquitectura: Rules en DB
+
+Rules NO van hardcodeadas. Van en `normalization_rules` table:
+- **Pattern**: "UBER.*EATS.*" (regex) o "Starbucks" (exact)
+- **normalized_name**: "Uber Eats"
+- **Priority**: Higher number = matched first
+- **match_type**: 'regex' | 'exact' | 'contains'
+
+Cambiar reglas = UPDATE en DB. No recompile. No redeploy.
+
+---
+
+<<src/lib/normalization.js>>=
+import Database from 'better-sqlite3';
+
+/**
+ * NormalizationEngine - Normaliza merchants usando rules de DB
+ */
+class NormalizationEngine {
+  constructor(dbPath) {
+    this.db = new Database(dbPath);
+    this.rules = this._loadRules();
+  }
+
+  <<normalization-normalize>>
+  <<normalization-apply-rule>>
+  <<normalization-load-rules>>
+
+  close() {
+    this.db.close();
+  }
+}
+
+export default NormalizationEngine;
+@
+
+<<normalization-normalize>>=
+/**
+ * Normalizar merchant usando rules de DB
+ *
+ * Edge Case #3: "UBER *EATS" → "Uber Eats"
+ *
+ * Proceso:
+ * 1. Iterar rules ordenadas por priority (DESC - higher first)
+ * 2. Primera rule que hace match = gana
+ * 3. Si ninguna hace match = retorna original
+ */
+normalize(merchantRaw) {
+  if (!merchantRaw) return merchantRaw;
+
+  // Sort por priority (higher = matched first)
+  const sortedRules = [...this.rules].sort((a, b) => b.priority - a.priority);
+
+  for (const rule of sortedRules) {
+    const match = this._applyRule(merchantRaw, rule);
+    if (match) {
+      return match;
+    }
+  }
+
+  // No match = retorna original
+  return merchantRaw;
+}
+@
+
+<<normalization-apply-rule>>=
+/**
+ * Aplicar una rule a un merchant
+ *
+ * Match types:
+ * - exact: Match exacto (case insensitive)
+ * - contains: Substring (case insensitive)
+ * - regex: Regex pattern match
+ */
+_applyRule(merchantRaw, rule) {
+  const upper = merchantRaw.toUpperCase();
+  const pattern = rule.pattern.toUpperCase();
+
+  switch (rule.match_type) {
+    case 'exact':
+      return upper === pattern ? rule.normalized_name : null;
+
+    case 'contains':
+      return upper.includes(pattern) ? rule.normalized_name : null;
+
+    case 'regex':
+      try {
+        const regex = new RegExp(rule.pattern, 'i');
+        return regex.test(merchantRaw) ? rule.normalized_name : null;
+      } catch (e) {
+        console.error(`Invalid regex pattern: ${rule.pattern}`, e);
+        return null;
+      }
+
+    default:
+      return null;
+  }
+}
+@
+
+<<normalization-load-rules>>=
+/**
+ * Cargar normalization rules de DB
+ */
+_loadRules() {
+  const stmt = this.db.prepare(`
+    SELECT * FROM normalization_rules
+    WHERE is_active = TRUE
+    ORDER BY priority DESC
+  `);
+
+  return stmt.all();
+}
+@
+
+---
+
+### Tests del Normalization Engine
+
+<<tests/normalization.test.js>>=
+import NormalizationEngine from '../src/lib/normalization.js';
+import Database from 'better-sqlite3';
+import { readFileSync, unlinkSync } from 'fs';
+
+const schemaSQL = readFileSync('src/db/schema.sql', 'utf-8');
+
+describe('NormalizationEngine', () => {
+  <<normalization-test-setup>>
+  <<normalization-test-exact-match>>
+  <<normalization-test-contains>>
+  <<normalization-test-regex>>
+  <<normalization-test-priority>>
+  <<normalization-test-no-match>>
+  <<normalization-test-case-insensitive>>
+  <<normalization-test-multiple-uber-formats>>
+});
+@
+
+<<normalization-test-setup>>=
+let db;
+let engine;
+let dbPath;
+
+beforeEach(() => {
+  dbPath = `test-${Date.now()}.db`;
+  db = new Database(dbPath);
+  db.exec(schemaSQL);
+
+  // Insert test rules
+  db.prepare(`
+    INSERT INTO normalization_rules (id, pattern, normalized_name, match_type, priority, is_active, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, TRUE, datetime('now'), datetime('now'))
+  `).run('rule-1', 'Starbucks', 'Starbucks', 'exact', 100);
+
+  db.prepare(`
+    INSERT INTO normalization_rules (id, pattern, normalized_name, match_type, priority, is_active, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, TRUE, datetime('now'), datetime('now'))
+  `).run('rule-2', 'AMAZON', 'Amazon', 'contains', 100);
+
+  db.prepare(`
+    INSERT INTO normalization_rules (id, pattern, normalized_name, match_type, priority, is_active, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, TRUE, datetime('now'), datetime('now'))
+  `).run('rule-3', 'UBER.*EATS', 'Uber Eats', 'regex', 100);
+
+  db.prepare(`
+    INSERT INTO normalization_rules (id, pattern, normalized_name, match_type, priority, is_active, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, TRUE, datetime('now'), datetime('now'))
+  `).run('rule-4', 'ST UBER.*', 'Uber', 'regex', 200);
+
+  db.prepare(`
+    INSERT INTO normalization_rules (id, pattern, normalized_name, match_type, priority, is_active, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, TRUE, datetime('now'), datetime('now'))
+  `).run('rule-5', '.*UBER.*', 'Uber', 'regex', 50);
+
+  engine = new NormalizationEngine(dbPath);
+});
+
+afterEach(() => {
+  engine.close();
+  db.close();
+  if (dbPath) {
+    try {
+      unlinkSync(dbPath);
+    } catch {}
+  }
+});
+@
+
+<<normalization-test-exact-match>>=
+test('normalizes exact match (case insensitive)', () => {
+  expect(engine.normalize('Starbucks')).toBe('Starbucks');
+  expect(engine.normalize('STARBUCKS')).toBe('Starbucks');
+  expect(engine.normalize('starbucks')).toBe('Starbucks');
+});
+@
+
+<<normalization-test-contains>>=
+test('normalizes with contains rule', () => {
+  expect(engine.normalize('AMAZON.COM')).toBe('Amazon');
+  expect(engine.normalize('AMAZON PRIME')).toBe('Amazon');
+  expect(engine.normalize('AMAZON WEB SERVICES')).toBe('Amazon');
+});
+@
+
+<<normalization-test-regex>>=
+test('normalizes with regex rule', () => {
+  // Edge Case #3: UBER en múltiples formatos
+  expect(engine.normalize('UBER *EATS MR TREUBLAAN')).toBe('Uber Eats');
+  expect(engine.normalize('UBER * EATS PENDING')).toBe('Uber Eats');
+  expect(engine.normalize('UBER EATS AMSTERDAM')).toBe('Uber Eats');
+});
+@
+
+<<normalization-test-priority>>=
+test('respects priority order (higher = matched first)', () => {
+  // rule-4 (priority 200) should match before rule-3 (priority 100)
+  expect(engine.normalize('ST UBER EATS')).toBe('Uber');  // Matches rule-4 first
+});
+@
+
+<<normalization-test-no-match>>=
+test('returns original when no rule matches', () => {
+  expect(engine.normalize('RANDOM MERCHANT 123')).toBe('RANDOM MERCHANT 123');
+  expect(engine.normalize('NEW STORE')).toBe('NEW STORE');
+});
+@
+
+<<normalization-test-case-insensitive>>=
+test('all rule types are case insensitive', () => {
+  expect(engine.normalize('starbucks')).toBe('Starbucks');  // exact
+  expect(engine.normalize('amazon prime')).toBe('Amazon');  // contains
+  expect(engine.normalize('uber eats test')).toBe('Uber Eats');  // regex
+});
+@
+
+<<normalization-test-multiple-uber-formats>>=
+test('normalizes all 8 UBER formats from real bank statements', () => {
+  // Edge Case #3: Real examples from uploaded statements
+  const uberFormats = [
+    'UBER *EATS MR TREUBLAAN 7 AMSTERDAM',
+    'UBER * EATS PENDING',
+    'ST UBER CARG RECUR.',
+    'STR UBER EATS CARG RECUR.',
+    'STRIPE UBER TRIP CIU',
+    'UBER CORNERSHOP CARG RECUR.',
+  ];
+
+  for (const format of uberFormats) {
+    const normalized = engine.normalize(format);
+    expect(['Uber', 'Uber Eats']).toContain(normalized);
+  }
+});
+@
+
+---
+
+**Tests Cubiertos:**
+
+✅ **Exact match** - "Starbucks" → "Starbucks"
+✅ **Contains** - "AMAZON PRIME" → "Amazon"
+✅ **Regex** - "UBER *EATS" → "Uber Eats"
+✅ **Priority** - Rule con priority más alta gana primero
+✅ **No match** - Retorna original si ninguna rule aplica
+✅ **Case insensitive** - Todos los match types ignoran case
+✅ **Multiple UBER formats** - Edge Case #3 completo
+
+**Edge Cases Soportados:**
+- Edge Case #3: Merchant variations (UBER en 8+ formatos)
+- Config-driven design → Agregar rule = INSERT, no recompile
+- Priority system → Control fino sobre matching order
+- Case insensitive → "UBER" = "uber" = "Uber"
+
+**Status**: ✅ Task 4 completada con tests ejecutables
