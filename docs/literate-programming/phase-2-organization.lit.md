@@ -1900,3 +1900,571 @@ describe('Budgets Table Schema', () => {
 
 ---
 
+## Task 19: Budget Tracking Engine 📊
+
+**Goal**: Implement logic to track budget spending and calculate status in real-time.
+
+**Scope**:
+- Calculate current period dates (monthly, weekly, yearly)
+- Get budget status (spent, remaining, percentage)
+- Check if budget should trigger alerts
+- Support multiple budgets tracking
+- Handle edge cases (no transactions, over budget)
+
+**LOC estimate**: ~150 LOC (engine ~80, tests ~70)
+
+---
+
+### Engine: budget-tracking.js
+
+Budget tracking engine that calculates spending against budgets in real-time.
+
+```javascript
+<<src/lib/budget-tracking.js>>=
+/**
+ * Calculate the current period start and end dates based on period type
+ */
+export function getCurrentPeriod(period, startDate) {
+  const now = new Date();
+
+  if (period === 'monthly') {
+    const start = new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    return {
+      startDate: start.toISOString().split('T')[0],
+      endDate: end.toISOString().split('T')[0]
+    };
+  }
+
+  if (period === 'weekly') {
+    const start = new Date(now);
+    start.setDate(now.getDate() - now.getDay()); // Start of week (Sunday)
+    const end = new Date(start);
+    end.setDate(start.getDate() + 6);
+    return {
+      startDate: start.toISOString().split('T')[0],
+      endDate: end.toISOString().split('T')[0]
+    };
+  }
+
+  if (period === 'yearly') {
+    const start = new Date(now.getFullYear(), 0, 1);
+    const end = new Date(now.getFullYear(), 11, 31);
+    return {
+      startDate: start.toISOString().split('T')[0],
+      endDate: end.toISOString().split('T')[0]
+    };
+  }
+
+  throw new Error(`Invalid period: ${period}`);
+}
+
+/**
+ * Get budget status for a specific budget
+ */
+export function getBudgetStatus(db, budgetId) {
+  // Get budget
+  const budget = db.prepare('SELECT * FROM budgets WHERE id = ?').get(budgetId);
+
+  if (!budget) {
+    throw new Error(`Budget not found: ${budgetId}`);
+  }
+
+  // Get categories for this budget
+  const categoryIds = db.prepare(
+    'SELECT category_id FROM budget_categories WHERE budget_id = ?'
+  ).all(budgetId).map(row => row.category_id);
+
+  if (categoryIds.length === 0) {
+    // Budget has no categories assigned
+    return {
+      budgetId: budget.id,
+      name: budget.name,
+      limit: budget.amount,
+      spent: 0,
+      remaining: budget.amount,
+      percentage: 0,
+      period: getCurrentPeriod(budget.period, budget.start_date),
+      isOverBudget: false,
+      shouldAlert: false,
+      categories: []
+    };
+  }
+
+  // Get current period
+  const { startDate, endDate } = getCurrentPeriod(budget.period, budget.start_date);
+
+  // Calculate total spent in this period for these categories
+  const placeholders = categoryIds.map(() => '?').join(',');
+  const result = db.prepare(`
+    SELECT COALESCE(SUM(ABS(amount)), 0) as total
+    FROM transactions
+    WHERE category_id IN (${placeholders})
+      AND date >= ?
+      AND date <= ?
+      AND type = 'expense'
+  `).get(...categoryIds, startDate, endDate);
+
+  const totalSpent = result.total;
+  const percentage = (totalSpent / budget.amount) * 100;
+  const remaining = budget.amount - totalSpent;
+
+  return {
+    budgetId: budget.id,
+    name: budget.name,
+    limit: budget.amount,
+    spent: totalSpent,
+    remaining,
+    percentage,
+    period: { startDate, endDate },
+    isOverBudget: totalSpent > budget.amount,
+    shouldAlert: percentage >= (budget.alert_threshold * 100),
+    categories: categoryIds
+  };
+}
+
+/**
+ * Get status for all active budgets
+ */
+export function getAllBudgetsStatus(db) {
+  const budgets = db.prepare('SELECT id FROM budgets WHERE is_active = ?').all(1);
+
+  return budgets.map(budget => getBudgetStatus(db, budget.id));
+}
+
+/**
+ * Check which budgets need alerts
+ */
+export function checkBudgetAlerts(db) {
+  const statuses = getAllBudgetsStatus(db);
+
+  return statuses.filter(status => status.shouldAlert && status.isOverBudget === false);
+}
+
+/**
+ * Check which budgets are over budget
+ */
+export function getOverBudgets(db) {
+  const statuses = getAllBudgetsStatus(db);
+
+  return statuses.filter(status => status.isOverBudget);
+}
+@
+```
+
+---
+
+### Tests: budget-tracking.test.js
+
+```javascript
+<<tests/budget-tracking.test.js>>=
+import { describe, test, expect, beforeEach, afterEach } from 'vitest';
+import Database from 'better-sqlite3';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import {
+  getCurrentPeriod,
+  getBudgetStatus,
+  getAllBudgetsStatus,
+  checkBudgetAlerts,
+  getOverBudgets
+} from '../src/lib/budget-tracking.js';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const ROOT_DIR = path.resolve(__dirname, '..');
+
+describe('Budget Tracking Engine', () => {
+  let db;
+
+  beforeEach(() => {
+    // Create in-memory database
+    db = new Database(':memory:');
+
+    // Run migrations
+    const schema = fs.readFileSync(path.join(ROOT_DIR, 'src/db/schema.sql'), 'utf-8');
+    db.exec(schema);
+
+    const categoriesMigration = fs.readFileSync(
+      path.join(ROOT_DIR, 'migrations/002-add-categories.sql'),
+      'utf-8'
+    );
+    db.exec(categoriesMigration);
+
+    const budgetsMigration = fs.readFileSync(
+      path.join(ROOT_DIR, 'migrations/004-add-budgets.sql'),
+      'utf-8'
+    );
+    db.exec(budgetsMigration);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  test('getCurrentPeriod returns correct monthly period', () => {
+    const period = getCurrentPeriod('monthly', '2025-01-01');
+
+    expect(period.startDate).toMatch(/^\d{4}-\d{2}-01$/);
+    expect(period.endDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+    // Start should be first day of current month
+    const now = new Date();
+    const expectedStart = new Date(now.getFullYear(), now.getMonth(), 1)
+      .toISOString()
+      .split('T')[0];
+    expect(period.startDate).toBe(expectedStart);
+  });
+
+  test('getCurrentPeriod returns correct weekly period', () => {
+    const period = getCurrentPeriod('weekly', '2025-01-01');
+
+    expect(period.startDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+    expect(period.endDate).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+    // Week should be 7 days
+    const start = new Date(period.startDate);
+    const end = new Date(period.endDate);
+    const diffDays = (end - start) / (1000 * 60 * 60 * 24);
+    expect(diffDays).toBe(6);
+  });
+
+  test('getCurrentPeriod returns correct yearly period', () => {
+    const period = getCurrentPeriod('yearly', '2025-01-01');
+
+    const now = new Date();
+    expect(period.startDate).toBe(`${now.getFullYear()}-01-01`);
+    expect(period.endDate).toBe(`${now.getFullYear()}-12-31`);
+  });
+
+  test('getCurrentPeriod throws error for invalid period', () => {
+    expect(() => getCurrentPeriod('invalid', '2025-01-01')).toThrow('Invalid period');
+  });
+
+  test('getBudgetStatus calculates correctly with no spending', () => {
+    const now = new Date().toISOString();
+
+    // Create budget
+    db.prepare(`
+      INSERT INTO budgets (id, name, amount, period, alert_threshold, start_date, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('budget-1', 'Food Budget', 800, 'monthly', 0.8, '2025-01-01', 1, now, now);
+
+    // Create category
+    db.prepare(`
+      INSERT INTO categories (id, name, created_at)
+      VALUES (?, ?, ?)
+    `).run('cat_food', 'Food & Dining', now);
+
+    // Link budget to category
+    db.prepare(`
+      INSERT INTO budget_categories (budget_id, category_id)
+      VALUES (?, ?)
+    `).run('budget-1', 'cat_food');
+
+    const status = getBudgetStatus(db, 'budget-1');
+
+    expect(status.budgetId).toBe('budget-1');
+    expect(status.name).toBe('Food Budget');
+    expect(status.limit).toBe(800);
+    expect(status.spent).toBe(0);
+    expect(status.remaining).toBe(800);
+    expect(status.percentage).toBe(0);
+    expect(status.isOverBudget).toBe(false);
+    expect(status.shouldAlert).toBe(false);
+  });
+
+  test('getBudgetStatus calculates correctly with spending', () => {
+    const now = new Date().toISOString();
+    const today = new Date().toISOString().split('T')[0];
+
+    // Create account
+    db.prepare(`
+      INSERT INTO accounts (id, name, type, institution, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('acc-1', 'Test Account', 'checking', 'Test Bank', now, now);
+
+    // Create budget
+    db.prepare(`
+      INSERT INTO budgets (id, name, amount, period, alert_threshold, start_date, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('budget-1', 'Food Budget', 800, 'monthly', 0.8, '2025-01-01', 1, now, now);
+
+    // Create category
+    db.prepare(`
+      INSERT INTO categories (id, name, created_at)
+      VALUES (?, ?, ?)
+    `).run('cat_food', 'Food & Dining', now);
+
+    // Link budget to category
+    db.prepare(`
+      INSERT INTO budget_categories (budget_id, category_id)
+      VALUES (?, ?)
+    `).run('budget-1', 'cat_food');
+
+    // Add transactions in current period
+    db.prepare(`
+      INSERT INTO transactions (id, account_id, date, merchant, merchant_raw, amount, currency, type, source_type, source_hash, category_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('txn-1', 'acc-1', today, 'Starbucks', 'STARBUCKS', -50, 'USD', 'expense', 'manual', 'hash1', 'cat_food', now, now);
+
+    db.prepare(`
+      INSERT INTO transactions (id, account_id, date, merchant, merchant_raw, amount, currency, type, source_type, source_hash, category_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('txn-2', 'acc-1', today, 'Whole Foods', 'WHOLE FOODS', -100, 'USD', 'expense', 'manual', 'hash2', 'cat_food', now, now);
+
+    const status = getBudgetStatus(db, 'budget-1');
+
+    expect(status.spent).toBe(150);
+    expect(status.remaining).toBe(650);
+    expect(status.percentage).toBe(18.75);
+    expect(status.isOverBudget).toBe(false);
+    expect(status.shouldAlert).toBe(false);
+  });
+
+  test('getBudgetStatus triggers alert at threshold', () => {
+    const now = new Date().toISOString();
+    const today = new Date().toISOString().split('T')[0];
+
+    // Create account
+    db.prepare(`
+      INSERT INTO accounts (id, name, type, institution, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('acc-1', 'Test Account', 'checking', 'Test Bank', now, now);
+
+    // Create budget with 80% threshold
+    db.prepare(`
+      INSERT INTO budgets (id, name, amount, period, alert_threshold, start_date, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('budget-1', 'Food Budget', 800, 'monthly', 0.8, '2025-01-01', 1, now, now);
+
+    // Create category
+    db.prepare(`
+      INSERT INTO categories (id, name, created_at)
+      VALUES (?, ?, ?)
+    `).run('cat_food', 'Food & Dining', now);
+
+    // Link budget to category
+    db.prepare(`
+      INSERT INTO budget_categories (budget_id, category_id)
+      VALUES (?, ?)
+    `).run('budget-1', 'cat_food');
+
+    // Add transaction that reaches 85% (over threshold)
+    db.prepare(`
+      INSERT INTO transactions (id, account_id, date, merchant, merchant_raw, amount, currency, type, source_type, source_hash, category_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('txn-1', 'acc-1', today, 'Costco', 'COSTCO', -680, 'USD', 'expense', 'manual', 'hash1', 'cat_food', now, now);
+
+    const status = getBudgetStatus(db, 'budget-1');
+
+    expect(status.spent).toBe(680);
+    expect(status.percentage).toBe(85);
+    expect(status.isOverBudget).toBe(false);
+    expect(status.shouldAlert).toBe(true); // 85% >= 80% threshold
+  });
+
+  test('getBudgetStatus detects over budget', () => {
+    const now = new Date().toISOString();
+    const today = new Date().toISOString().split('T')[0];
+
+    // Create account
+    db.prepare(`
+      INSERT INTO accounts (id, name, type, institution, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('acc-1', 'Test Account', 'checking', 'Test Bank', now, now);
+
+    // Create budget
+    db.prepare(`
+      INSERT INTO budgets (id, name, amount, period, alert_threshold, start_date, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('budget-1', 'Food Budget', 800, 'monthly', 0.8, '2025-01-01', 1, now, now);
+
+    // Create category
+    db.prepare(`
+      INSERT INTO categories (id, name, created_at)
+      VALUES (?, ?, ?)
+    `).run('cat_food', 'Food & Dining', now);
+
+    // Link budget to category
+    db.prepare(`
+      INSERT INTO budget_categories (budget_id, category_id)
+      VALUES (?, ?)
+    `).run('budget-1', 'cat_food');
+
+    // Add transaction that exceeds budget
+    db.prepare(`
+      INSERT INTO transactions (id, account_id, date, merchant, merchant_raw, amount, currency, type, source_type, source_hash, category_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('txn-1', 'acc-1', today, 'Costco', 'COSTCO', -900, 'USD', 'expense', 'manual', 'hash1', 'cat_food', now, now);
+
+    const status = getBudgetStatus(db, 'budget-1');
+
+    expect(status.spent).toBe(900);
+    expect(status.remaining).toBe(-100);
+    expect(status.percentage).toBe(112.5);
+    expect(status.isOverBudget).toBe(true);
+    expect(status.shouldAlert).toBe(true);
+  });
+
+  test('getBudgetStatus handles budget with no categories', () => {
+    const now = new Date().toISOString();
+
+    // Create budget without linking categories
+    db.prepare(`
+      INSERT INTO budgets (id, name, amount, period, alert_threshold, start_date, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('budget-1', 'Empty Budget', 800, 'monthly', 0.8, '2025-01-01', 1, now, now);
+
+    const status = getBudgetStatus(db, 'budget-1');
+
+    expect(status.spent).toBe(0);
+    expect(status.remaining).toBe(800);
+    expect(status.categories).toEqual([]);
+  });
+
+  test('getAllBudgetsStatus returns all active budgets', () => {
+    const now = new Date().toISOString();
+
+    // Create multiple budgets
+    db.prepare(`
+      INSERT INTO budgets (id, name, amount, period, start_date, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('budget-1', 'Budget 1', 800, 'monthly', '2025-01-01', 1, now, now);
+
+    db.prepare(`
+      INSERT INTO budgets (id, name, amount, period, start_date, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('budget-2', 'Budget 2', 500, 'weekly', '2025-01-01', 1, now, now);
+
+    db.prepare(`
+      INSERT INTO budgets (id, name, amount, period, start_date, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('budget-3', 'Inactive Budget', 1000, 'monthly', '2025-01-01', 0, now, now);
+
+    const statuses = getAllBudgetsStatus(db);
+
+    expect(statuses.length).toBe(2); // Only active budgets
+    expect(statuses[0].name).toBe('Budget 1');
+    expect(statuses[1].name).toBe('Budget 2');
+  });
+
+  test('checkBudgetAlerts returns only budgets needing alerts', () => {
+    const now = new Date().toISOString();
+    const today = new Date().toISOString().split('T')[0];
+
+    // Create account
+    db.prepare(`
+      INSERT INTO accounts (id, name, type, institution, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('acc-1', 'Test Account', 'checking', 'Test Bank', now, now);
+
+    // Create category
+    db.prepare(`
+      INSERT INTO categories (id, name, created_at)
+      VALUES (?, ?, ?)
+    `).run('cat_food', 'Food & Dining', now);
+
+    // Budget 1: At 85% (should alert, not over)
+    db.prepare(`
+      INSERT INTO budgets (id, name, amount, period, alert_threshold, start_date, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('budget-1', 'Alert Budget', 1000, 'monthly', 0.8, '2025-01-01', 1, now, now);
+
+    db.prepare(`
+      INSERT INTO budget_categories (budget_id, category_id)
+      VALUES (?, ?)
+    `).run('budget-1', 'cat_food');
+
+    db.prepare(`
+      INSERT INTO transactions (id, account_id, date, merchant, merchant_raw, amount, currency, type, source_type, source_hash, category_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('txn-1', 'acc-1', today, 'Store', 'STORE', -850, 'USD', 'expense', 'manual', 'hash1', 'cat_food', now, now);
+
+    // Budget 2: At 50% (should not alert)
+    db.prepare(`
+      INSERT INTO budgets (id, name, amount, period, alert_threshold, start_date, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('budget-2', 'OK Budget', 1000, 'monthly', 0.8, '2025-01-01', 1, now, now);
+
+    const alerts = checkBudgetAlerts(db);
+
+    expect(alerts.length).toBe(1);
+    expect(alerts[0].name).toBe('Alert Budget');
+  });
+
+  test('getOverBudgets returns only budgets over limit', () => {
+    const now = new Date().toISOString();
+    const today = new Date().toISOString().split('T')[0];
+
+    // Create account
+    db.prepare(`
+      INSERT INTO accounts (id, name, type, institution, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('acc-1', 'Test Account', 'checking', 'Test Bank', now, now);
+
+    // Create category
+    db.prepare(`
+      INSERT INTO categories (id, name, created_at)
+      VALUES (?, ?, ?)
+    `).run('cat_food', 'Food & Dining', now);
+
+    // Budget 1: Over budget (110%)
+    db.prepare(`
+      INSERT INTO budgets (id, name, amount, period, alert_threshold, start_date, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('budget-1', 'Over Budget', 1000, 'monthly', 0.8, '2025-01-01', 1, now, now);
+
+    db.prepare(`
+      INSERT INTO budget_categories (budget_id, category_id)
+      VALUES (?, ?)
+    `).run('budget-1', 'cat_food');
+
+    db.prepare(`
+      INSERT INTO transactions (id, account_id, date, merchant, merchant_raw, amount, currency, type, source_type, source_hash, category_id, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run('txn-1', 'acc-1', today, 'Store', 'STORE', -1100, 'USD', 'expense', 'manual', 'hash1', 'cat_food', now, now);
+
+    const overBudgets = getOverBudgets(db);
+
+    expect(overBudgets.length).toBe(1);
+    expect(overBudgets[0].name).toBe('Over Budget');
+    expect(overBudgets[0].isOverBudget).toBe(true);
+  });
+});
+@
+```
+
+---
+
+### ✅ Test Coverage: Budget Tracking
+
+**Tests cubiertos**:
+1. ✅ getCurrentPeriod returns correct monthly period
+2. ✅ getCurrentPeriod returns correct weekly period
+3. ✅ getCurrentPeriod returns correct yearly period
+4. ✅ getCurrentPeriod throws error for invalid period
+5. ✅ getBudgetStatus calculates correctly with no spending
+6. ✅ getBudgetStatus calculates correctly with spending
+7. ✅ getBudgetStatus triggers alert at threshold
+8. ✅ getBudgetStatus detects over budget
+9. ✅ getBudgetStatus handles budget with no categories
+10. ✅ getAllBudgetsStatus returns all active budgets
+11. ✅ checkBudgetAlerts returns only budgets needing alerts
+12. ✅ getOverBudgets returns only budgets over limit
+
+---
+
+### 📊 Status: Task 19 Complete
+
+**Output**:
+- ✅ `src/lib/budget-tracking.js` - Budget tracking engine
+- ✅ `tests/budget-tracking.test.js` - 12 tests
+
+**Total**: ~200 LOC (slightly over estimate due to comprehensive edge case handling)
+
+**Next**: Task 20 - Budgets UI
+
+---
+
