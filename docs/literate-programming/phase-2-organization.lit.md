@@ -816,3 +816,745 @@ describe('Auto-Categorization Engine', () => {
 
 ---
 
+## Task 17: Categories UI Component 🎨
+
+**Goal**: Create a UI component for managing categories (view, create, edit, delete).
+
+**Scope**:
+- View all system and custom categories
+- Create new custom categories (name, icon, color, optional parent)
+- Edit existing custom categories
+- Delete categories (with warning if in use)
+- Toggle active/inactive status
+
+**LOC estimate**: ~250 LOC (component ~120, styles ~50, tests ~80)
+
+---
+
+### Component: CategoryManager.jsx
+
+React component for managing categories. Displays list of categories with create/edit/delete functionality.
+
+```javascript
+<<src/components/CategoryManager.jsx>>=
+import React, { useState, useEffect } from 'react';
+import './CategoryManager.css';
+
+export default function CategoryManager() {
+  const [categories, setCategories] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editingCategory, setEditingCategory] = useState(null);
+  const [formData, setFormData] = useState({
+    name: '',
+    icon: '🏷️',
+    color: '#999999'
+  });
+
+  const availableIcons = ['🍔', '🚗', '🏠', '🎬', '🛒', '💼', '💰', '⚕️', '✈️', '🎓', '📱', '🔧', '🏷️', '🎸', '🧘', '💆', '🏥', '❤️'];
+  const availableColors = ['#FF6B6B', '#4ECDC4', '#95E1D3', '#F38181', '#AA96DA', '#FCBAD3', '#51CF66', '#A8DADC', '#457B9D', '#F1FAEE', '#E63946', '#999999'];
+
+  useEffect(() => {
+    loadCategories();
+  }, []);
+
+  async function loadCategories() {
+    try {
+      const result = await window.electronAPI.getCategories();
+      setCategories(result);
+    } catch (error) {
+      console.error('Failed to load categories:', error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleCreateNew() {
+    setEditingCategory(null);
+    setFormData({ name: '', icon: '🏷️', color: '#999999' });
+    setShowForm(true);
+  }
+
+  function handleEdit(category) {
+    if (category.is_system) {
+      alert('System categories cannot be edited');
+      return;
+    }
+    setEditingCategory(category);
+    setFormData({
+      name: category.name,
+      icon: category.icon || '🏷️',
+      color: category.color || '#999999'
+    });
+    setShowForm(true);
+  }
+
+  async function handleDelete(category) {
+    if (category.is_system) {
+      alert('System categories cannot be deleted');
+      return;
+    }
+
+    // Check if category is in use
+    const usageCount = await window.electronAPI.getCategoryUsageCount(category.id);
+
+    if (usageCount > 0) {
+      const confirmed = window.confirm(
+        `⚠️ Warning: ${usageCount} transactions are currently using this category.\n\n` +
+        `Deleting this category will set those transactions to "Uncategorized".\n\n` +
+        `Continue?`
+      );
+      if (!confirmed) return;
+    }
+
+    try {
+      await window.electronAPI.deleteCategory(category.id);
+      loadCategories();
+    } catch (error) {
+      alert('Failed to delete category: ' + error.message);
+    }
+  }
+
+  async function handleToggleActive(category) {
+    try {
+      await window.electronAPI.updateCategory(category.id, {
+        is_active: !category.is_active
+      });
+      loadCategories();
+    } catch (error) {
+      alert('Failed to update category: ' + error.message);
+    }
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+
+    if (!formData.name.trim()) {
+      alert('Name is required');
+      return;
+    }
+
+    try {
+      if (editingCategory) {
+        await window.electronAPI.updateCategory(editingCategory.id, formData);
+      } else {
+        await window.electronAPI.createCategory(formData);
+      }
+      setShowForm(false);
+      loadCategories();
+    } catch (error) {
+      alert('Failed to save category: ' + error.message);
+    }
+  }
+
+  function handleCancel() {
+    setShowForm(false);
+    setEditingCategory(null);
+    setFormData({ name: '', icon: '🏷️', color: '#999999' });
+  }
+
+  if (loading) {
+    return <div className="category-manager loading">Loading categories...</div>;
+  }
+
+  const systemCategories = categories.filter(c => c.is_system);
+  const customCategories = categories.filter(c => !c.is_system);
+
+  return (
+    <div className="category-manager">
+      <div className="category-manager-header">
+        <h2>Categories</h2>
+        <button onClick={handleCreateNew} className="btn-primary">
+          + New Category
+        </button>
+      </div>
+
+      {showForm && (
+        <div className="category-form-overlay">
+          <div className="category-form">
+            <h3>{editingCategory ? 'Edit Category' : 'Create Category'}</h3>
+            <form onSubmit={handleSubmit}>
+              <div className="form-group">
+                <label htmlFor="name">Name *</label>
+                <input
+                  id="name"
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  placeholder="e.g., Therapy"
+                  required
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Icon</label>
+                <div className="icon-picker">
+                  {availableIcons.map((icon) => (
+                    <button
+                      key={icon}
+                      type="button"
+                      className={`icon-option ${formData.icon === icon ? 'selected' : ''}`}
+                      onClick={() => setFormData({ ...formData, icon })}
+                    >
+                      {icon}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Color</label>
+                <div className="color-picker">
+                  {availableColors.map((color) => (
+                    <button
+                      key={color}
+                      type="button"
+                      className={`color-option ${formData.color === color ? 'selected' : ''}`}
+                      style={{ backgroundColor: color }}
+                      onClick={() => setFormData({ ...formData, color })}
+                    />
+                  ))}
+                </div>
+              </div>
+
+              <div className="form-actions">
+                <button type="button" onClick={handleCancel} className="btn-secondary">
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary">
+                  {editingCategory ? 'Save' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      <div className="category-list">
+        <div className="category-section">
+          <h3>System Categories</h3>
+          {systemCategories.map((cat) => (
+            <div key={cat.id} className="category-item">
+              <span className="category-icon" style={{ color: cat.color }}>
+                {cat.icon}
+              </span>
+              <span className="category-name">{cat.name}</span>
+              <span className="category-status">
+                {cat.is_active ? '(active)' : '(inactive)'}
+              </span>
+              <button
+                onClick={() => handleToggleActive(cat)}
+                className="btn-small"
+              >
+                {cat.is_active ? 'Deactivate' : 'Activate'}
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {customCategories.length > 0 && (
+          <div className="category-section">
+            <h3>Custom Categories</h3>
+            {customCategories.map((cat) => (
+              <div key={cat.id} className="category-item">
+                <span className="category-icon" style={{ color: cat.color }}>
+                  {cat.icon}
+                </span>
+                <span className="category-name">{cat.name}</span>
+                <span className="category-status">
+                  {cat.is_active ? '(active)' : '(inactive)'}
+                </span>
+                <div className="category-actions">
+                  <button onClick={() => handleEdit(cat)} className="btn-small">
+                    Edit
+                  </button>
+                  <button
+                    onClick={() => handleToggleActive(cat)}
+                    className="btn-small"
+                  >
+                    {cat.is_active ? 'Deactivate' : 'Activate'}
+                  </button>
+                  <button
+                    onClick={() => handleDelete(cat)}
+                    className="btn-small btn-danger"
+                  >
+                    Delete
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+@
+```
+
+---
+
+### Styles: CategoryManager.css
+
+```css
+<<src/components/CategoryManager.css>>=
+.category-manager {
+  padding: 20px;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.category-manager.loading {
+  text-align: center;
+  padding: 40px;
+  color: #666;
+}
+
+.category-manager-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 30px;
+}
+
+.category-manager-header h2 {
+  margin: 0;
+  font-size: 24px;
+  color: #333;
+}
+
+.category-form-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.category-form {
+  background: white;
+  padding: 30px;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 500px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.category-form h3 {
+  margin: 0 0 20px 0;
+  font-size: 20px;
+  color: #333;
+}
+
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
+  color: #555;
+}
+
+.form-group input {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.icon-picker,
+.color-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.icon-option {
+  width: 40px;
+  height: 40px;
+  border: 2px solid #ddd;
+  border-radius: 4px;
+  background: white;
+  font-size: 20px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.icon-option:hover {
+  border-color: #999;
+  transform: scale(1.1);
+}
+
+.icon-option.selected {
+  border-color: #4CAF50;
+  background: #f0f8f0;
+}
+
+.color-option {
+  width: 40px;
+  height: 40px;
+  border: 2px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.color-option:hover {
+  transform: scale(1.1);
+}
+
+.color-option.selected {
+  border-color: #333;
+  box-shadow: 0 0 0 2px white, 0 0 0 4px #4CAF50;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 30px;
+}
+
+.category-list {
+  display: flex;
+  flex-direction: column;
+  gap: 30px;
+}
+
+.category-section h3 {
+  font-size: 16px;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 15px;
+}
+
+.category-item {
+  display: flex;
+  align-items: center;
+  padding: 15px;
+  background: #f9f9f9;
+  border-radius: 6px;
+  margin-bottom: 10px;
+}
+
+.category-icon {
+  font-size: 24px;
+  margin-right: 12px;
+}
+
+.category-name {
+  flex: 1;
+  font-weight: 500;
+  color: #333;
+}
+
+.category-status {
+  font-size: 12px;
+  color: #999;
+  margin-right: 15px;
+}
+
+.category-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.btn-primary {
+  background: #4CAF50;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-primary:hover {
+  background: #45a049;
+}
+
+.btn-secondary {
+  background: #f0f0f0;
+  color: #333;
+  border: 1px solid #ddd;
+  padding: 10px 20px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-secondary:hover {
+  background: #e0e0e0;
+}
+
+.btn-small {
+  background: #f0f0f0;
+  color: #333;
+  border: 1px solid #ddd;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-small:hover {
+  background: #e0e0e0;
+}
+
+.btn-danger {
+  color: #d32f2f;
+  border-color: #d32f2f;
+}
+
+.btn-danger:hover {
+  background: #ffebee;
+}
+@
+```
+
+---
+
+### Tests: CategoryManager.test.jsx
+
+```javascript
+<<tests/CategoryManager.test.jsx>>=
+import React from 'react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import CategoryManager from '../src/components/CategoryManager.jsx';
+import { vi } from 'vitest';
+
+describe('CategoryManager Component', () => {
+  const mockCategories = [
+    { id: 'cat_food', name: 'Food & Dining', icon: '🍔', color: '#FF6B6B', is_system: true, is_active: true },
+    { id: 'cat_transport', name: 'Transportation', icon: '🚗', color: '#4ECDC4', is_system: true, is_active: true },
+    { id: 'cat_therapy', name: 'Therapy', icon: '🧘', color: '#AA96DA', is_system: false, is_active: true }
+  ];
+
+  beforeEach(() => {
+    window.electronAPI = {
+      getCategories: vi.fn(),
+      createCategory: vi.fn(),
+      updateCategory: vi.fn(),
+      deleteCategory: vi.fn(),
+      getCategoryUsageCount: vi.fn()
+    };
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  test('renders loading state initially', () => {
+    window.electronAPI.getCategories.mockImplementation(() => new Promise(() => {}));
+    render(<CategoryManager />);
+    expect(screen.getByText(/Loading categories/i)).toBeInTheDocument();
+  });
+
+  test('renders categories after loading', async () => {
+    window.electronAPI.getCategories.mockResolvedValue(mockCategories);
+
+    render(<CategoryManager />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Food & Dining')).toBeInTheDocument();
+      expect(screen.getByText('Transportation')).toBeInTheDocument();
+      expect(screen.getByText('Therapy')).toBeInTheDocument();
+    });
+  });
+
+  test('separates system and custom categories', async () => {
+    window.electronAPI.getCategories.mockResolvedValue(mockCategories);
+
+    render(<CategoryManager />);
+
+    await waitFor(() => {
+      expect(screen.getByText('System Categories')).toBeInTheDocument();
+      expect(screen.getByText('Custom Categories')).toBeInTheDocument();
+    });
+  });
+
+  test('opens create form when clicking New Category button', async () => {
+    window.electronAPI.getCategories.mockResolvedValue(mockCategories);
+
+    render(<CategoryManager />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Food & Dining')).toBeInTheDocument();
+    });
+
+    const newButton = screen.getByText('+ New Category');
+    fireEvent.click(newButton);
+
+    expect(screen.getByText('Create Category')).toBeInTheDocument();
+    expect(screen.getByLabelText(/Name/i)).toBeInTheDocument();
+  });
+
+  test('creates new category successfully', async () => {
+    window.electronAPI.getCategories.mockResolvedValue(mockCategories);
+    window.electronAPI.createCategory.mockResolvedValue({ success: true });
+
+    render(<CategoryManager />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Food & Dining')).toBeInTheDocument();
+    });
+
+    // Open form
+    fireEvent.click(screen.getByText('+ New Category'));
+
+    // Fill form
+    const nameInput = screen.getByLabelText(/Name/i);
+    fireEvent.change(nameInput, { target: { value: 'New Category' } });
+
+    // Submit
+    const createButton = screen.getByText('Create');
+    fireEvent.click(createButton);
+
+    await waitFor(() => {
+      expect(window.electronAPI.createCategory).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'New Category',
+          icon: expect.any(String),
+          color: expect.any(String)
+        })
+      );
+    });
+  });
+
+  test('prevents editing system categories', async () => {
+    window.electronAPI.getCategories.mockResolvedValue(mockCategories);
+    window.alert = vi.fn();
+
+    render(<CategoryManager />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Food & Dining')).toBeInTheDocument();
+    });
+
+    // Try to edit system category (Food & Dining)
+    const systemCategory = screen.getByText('Food & Dining').closest('.category-item');
+    const editButton = systemCategory.querySelector('button');
+
+    // System categories only have toggle button, not edit
+    // We check that system categories don't have "Edit" button
+    expect(systemCategory.textContent).not.toContain('Edit');
+  });
+
+  test('allows editing custom categories', async () => {
+    window.electronAPI.getCategories.mockResolvedValue(mockCategories);
+
+    render(<CategoryManager />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Therapy')).toBeInTheDocument();
+    });
+
+    // Find custom category and click Edit
+    const therapyCategory = screen.getByText('Therapy').closest('.category-item');
+    const editButton = therapyCategory.querySelector('button');
+    fireEvent.click(editButton);
+
+    await waitFor(() => {
+      expect(screen.getByText('Edit Category')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('Therapy')).toBeInTheDocument();
+    });
+  });
+
+  test('warns when deleting category with transactions', async () => {
+    window.electronAPI.getCategories.mockResolvedValue(mockCategories);
+    window.electronAPI.getCategoryUsageCount.mockResolvedValue(15);
+    window.confirm = vi.fn(() => false); // User cancels
+
+    render(<CategoryManager />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Therapy')).toBeInTheDocument();
+    });
+
+    // Find custom category and click Delete
+    const therapyCategory = screen.getByText('Therapy').closest('.category-item');
+    const deleteButton = Array.from(therapyCategory.querySelectorAll('button')).find(
+      btn => btn.textContent === 'Delete'
+    );
+    fireEvent.click(deleteButton);
+
+    await waitFor(() => {
+      expect(window.electronAPI.getCategoryUsageCount).toHaveBeenCalledWith('cat_therapy');
+      expect(window.confirm).toHaveBeenCalled();
+    });
+
+    // Should not delete because user cancelled
+    expect(window.electronAPI.deleteCategory).not.toHaveBeenCalled();
+  });
+
+  test('toggles category active status', async () => {
+    window.electronAPI.getCategories.mockResolvedValue(mockCategories);
+    window.electronAPI.updateCategory.mockResolvedValue({ success: true });
+
+    render(<CategoryManager />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Therapy')).toBeInTheDocument();
+    });
+
+    // Find custom category and click Deactivate
+    const therapyCategory = screen.getByText('Therapy').closest('.category-item');
+    const deactivateButton = Array.from(therapyCategory.querySelectorAll('button')).find(
+      btn => btn.textContent === 'Deactivate'
+    );
+    fireEvent.click(deactivateButton);
+
+    await waitFor(() => {
+      expect(window.electronAPI.updateCategory).toHaveBeenCalledWith('cat_therapy', {
+        is_active: false
+      });
+    });
+  });
+});
+@
+```
+
+---
+
+### ✅ Test Coverage: CategoryManager
+
+**Tests cubiertos**:
+1. ✅ Renders loading state initially
+2. ✅ Renders categories after loading
+3. ✅ Separates system and custom categories
+4. ✅ Opens create form when clicking New Category button
+5. ✅ Creates new category successfully
+6. ✅ Prevents editing system categories
+7. ✅ Allows editing custom categories
+8. ✅ Warns when deleting category with transactions
+9. ✅ Toggles category active status
+
+---
+
+### 📊 Status: Task 17 Complete
+
+**Output**:
+- ✅ `src/components/CategoryManager.jsx` - Category management UI
+- ✅ `src/components/CategoryManager.css` - Component styles
+- ✅ `tests/CategoryManager.test.jsx` - 9 tests
+
+**Total**: ~280 LOC (slightly over estimate due to detailed UI)
+
+**Next**: Task 18 - Budgets Table
+
+---
+
