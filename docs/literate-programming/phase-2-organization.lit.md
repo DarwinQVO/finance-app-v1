@@ -383,3 +383,436 @@ describe('Categories Table', () => {
 
 ---
 
+## 🎯 Task 16: Auto-Categorization Engine
+
+**Refs**: [flow-7-manage-categories.md](../02-user-flows/flow-7-manage-categories.md)
+
+**Objetivo**: Link normalization rules con categories para auto-categorizar transactions durante parsing.
+
+**LOC estimado**: ~200
+
+**Dependencies**: ✅ Task 15 (categories table exists)
+
+---
+
+### 🤔 Por qué Auto-Categorization?
+
+El problema: el usuario NO quiere categorizar manualmente cada transaction. Con cientos de transactions por mes, sería tedioso.
+
+**Solución**: Categorizar automáticamente durante el parsing basado en el merchant.
+
+```
+"STARBUCKS STORE #12345" → Normalize → "Starbucks" → Category lookup → "Food & Dining"
+```
+
+El usuario no hace nada. La transaction ya viene categorizada cuando aparece en el timeline.
+
+---
+
+### 🏗️ Architecture: Category Lookup
+
+Ya tenemos `normalization_rules` table que mapea patterns → normalized_merchant.
+
+**Idea**: Agregar `category_id` a esa tabla.
+
+```sql
+ALTER TABLE normalization_rules ADD COLUMN category_id TEXT;
+```
+
+Ahora cada regla puede tener un category asociado:
+
+| pattern | normalized_merchant | category_id |
+|---------|---------------------|-------------|
+| /starbucks/i | Starbucks | cat_food |
+| /uber/i | Uber | cat_transport |
+| /netflix/i | Netflix | cat_entertainment |
+
+Durante normalization, también obtenemos el `category_id`.
+
+---
+
+### 💻 Implementation: Update Normalization Rules Schema
+
+<<migrations/003-add-category-to-rules.sql>>=
+-- Phase 2 Migration: Add category_id to normalization_rules
+
+ALTER TABLE normalization_rules ADD COLUMN category_id TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_normalization_rules_category ON normalization_rules(category_id);
+@
+
+**Simple migration**: Solo agrega columna y índice.
+
+---
+
+### 🌱 Update Seed: Add Categories to Existing Rules
+
+Ahora vamos a actualizar las reglas existentes con categories apropiadas.
+
+<<src/db/update-normalization-rules-categories.sql>>=
+-- Update existing normalization rules with category_id
+-- Phase 2: Task 16
+
+-- Food & Dining
+UPDATE normalization_rules SET category_id = 'cat_food' WHERE normalized_name IN ('Starbucks', 'McDonald''s', 'Pizza Hut', 'Whole Foods', 'Trader Joe''s');
+
+-- Transportation
+UPDATE normalization_rules SET category_id = 'cat_transport' WHERE normalized_name IN ('Uber', 'Uber Eats', 'Lyft', 'Shell', 'Chevron');
+
+-- Entertainment
+UPDATE normalization_rules SET category_id = 'cat_entertainment' WHERE normalized_name IN ('Netflix', 'Spotify', 'HBO', 'Disney+');
+
+-- Shopping
+UPDATE normalization_rules SET category_id = 'cat_shopping' WHERE normalized_name IN ('Amazon', 'Target', 'Walmart', 'Costco');
+
+-- Utilities
+UPDATE normalization_rules SET category_id = 'cat_utilities' WHERE normalized_name IN ('Verizon', 'AT&T', 'Comcast', 'PG&E');
+@
+
+**Pattern matching**: Actualiza rules basado en keywords en el pattern.
+
+---
+
+### 📦 Auto-Categorization Logic
+
+Ahora necesitamos lógica para obtener category durante normalization.
+
+<<src/lib/auto-categorization.js>>=
+/**
+ * Auto-Categorization Engine
+ *
+ * Gets category_id for a transaction based on normalized merchant.
+ *
+ * Phase 2: Task 16
+ */
+
+/**
+ * Get category for a normalized merchant
+ *
+ * @param {object} db - better-sqlite3 database instance
+ * @param {string} normalizedMerchant - Normalized merchant name (e.g., "Starbucks")
+ * @returns {string|null} - category_id or null if not found
+ */
+export function getCategoryForMerchant(db, normalizedMerchant) {
+  if (!normalizedMerchant) return null;
+
+  const rule = db.prepare(`
+    SELECT category_id
+    FROM normalization_rules
+    WHERE normalized_name = ?
+      AND is_active = TRUE
+      AND category_id IS NOT NULL
+    LIMIT 1
+  `).get(normalizedMerchant);
+
+  return rule?.category_id || null;
+}
+
+/**
+ * Auto-categorize a transaction
+ *
+ * Given raw transaction data, normalize merchant and get category.
+ *
+ * @param {object} db - better-sqlite3 database instance
+ * @param {object} transaction - Raw transaction with description
+ * @returns {object} - { normalized_merchant, category_id }
+ */
+export async function autoCategorizeTransaction(db, transaction) {
+  // First, normalize the merchant
+  // (This uses existing normalization logic from Phase 1)
+  const { normalizeMerchant } = await import('./normalization.js');
+  const normalizedMerchant = normalizeMerchant(db, transaction.description);
+
+  // Then, get category for normalized merchant
+  const categoryId = getCategoryForMerchant(db, normalizedMerchant);
+
+  return {
+    normalized_merchant: normalizedMerchant,
+    category_id: categoryId
+  };
+}
+
+/**
+ * Bulk auto-categorize transactions
+ *
+ * For existing transactions without categories, try to assign them.
+ *
+ * @param {object} db - better-sqlite3 database instance
+ * @returns {number} - Number of transactions updated
+ */
+export function bulkAutoCategorize(db) {
+  // Get all transactions without category
+  const transactions = db.prepare(`
+    SELECT id, merchant
+    FROM transactions
+    WHERE category_id IS NULL
+  `).all();
+
+  let updated = 0;
+
+  const updateStmt = db.prepare(`
+    UPDATE transactions
+    SET category_id = ?
+    WHERE id = ?
+  `);
+
+  for (const txn of transactions) {
+    const categoryId = getCategoryForMerchant(db, txn.merchant);
+
+    if (categoryId) {
+      updateStmt.run(categoryId, txn.id);
+      updated++;
+    }
+  }
+
+  return updated;
+}
+@
+
+**Key functions**:
+- `getCategoryForMerchant()` - Lookup category by merchant
+- `autoCategorizeTransaction()` - Normalize + categorize in one go
+- `bulkAutoCategorize()` - Update existing transactions
+
+---
+
+### 🧪 Tests: Auto-Categorization Engine
+
+<<tests/auto-categorization.test.js>>=
+import { describe, test, expect, beforeEach, afterEach } from 'vitest';
+import Database from 'better-sqlite3';
+import { readFileSync } from 'fs';
+import {
+  getCategoryForMerchant,
+  bulkAutoCategorize
+} from '../src/lib/auto-categorization.js';
+
+describe('Auto-Categorization Engine', () => {
+  let db;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+
+    // Run Phase 1 schema
+    const phase1Schema = readFileSync('src/db/schema.sql', 'utf8');
+    db.exec(phase1Schema);
+
+    // Run Phase 2 migrations
+    const categoriesMigration = readFileSync('migrations/002-add-categories.sql', 'utf8');
+    db.exec(categoriesMigration);
+
+    const categoryRulesMigration = readFileSync('migrations/003-add-category-to-rules.sql', 'utf8');
+    db.exec(categoryRulesMigration);
+
+    // Seed categories
+    const seedCategories = readFileSync('src/db/seed-categories.sql', 'utf8');
+    db.exec(seedCategories);
+
+    // Seed normalization rules
+    const seedRules = readFileSync('src/db/seed-normalization-rules.sql', 'utf8');
+    db.exec(seedRules);
+
+    // Update rules with categories
+    const updateRules = readFileSync('src/db/update-normalization-rules-categories.sql', 'utf8');
+    db.exec(updateRules);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  test('getCategoryForMerchant returns correct category', () => {
+    const categoryId = getCategoryForMerchant(db, 'Starbucks');
+    expect(categoryId).toBe('cat_food');
+  });
+
+  test('getCategoryForMerchant returns null for unknown merchant', () => {
+    const categoryId = getCategoryForMerchant(db, 'Unknown Merchant XYZ');
+    expect(categoryId).toBeNull();
+  });
+
+  test('getCategoryForMerchant returns null for null merchant', () => {
+    const categoryId = getCategoryForMerchant(db, null);
+    expect(categoryId).toBeNull();
+  });
+
+  test('different merchants get different categories', () => {
+    const foodCategory = getCategoryForMerchant(db, 'Starbucks');
+    const transportCategory = getCategoryForMerchant(db, 'Uber');
+    const entertainmentCategory = getCategoryForMerchant(db, 'Netflix');
+
+    expect(foodCategory).toBe('cat_food');
+    expect(transportCategory).toBe('cat_transport');
+    expect(entertainmentCategory).toBe('cat_entertainment');
+  });
+
+  test('bulkAutoCategorize updates transactions without categories', () => {
+    const now = new Date().toISOString();
+
+    // Create test account first (foreign key constraint)
+    db.prepare(`
+      INSERT INTO accounts (id, name, type, institution, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('acc-1', 'Test Account', 'checking', 'Test Bank', now, now);
+
+    // Insert test transactions without categories
+    db.prepare(`
+      INSERT INTO transactions (id, account_id, date, merchant, merchant_raw, amount, currency, type, source_type, source_hash, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'txn-1',
+      'acc-1',
+      '2025-01-15',
+      'Starbucks',           // Normalized
+      'STARBUCKS #12345',    // Raw (required)
+      -5.50,
+      'USD',
+      'expense',
+      'manual',
+      'hash1',
+      now,
+      now
+    );
+
+    db.prepare(`
+      INSERT INTO transactions (id, account_id, date, merchant, merchant_raw, amount, currency, type, source_type, source_hash, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'txn-2',
+      'acc-1',
+      '2025-01-16',
+      'Uber',                // Normalized
+      'UBER EATS',           // Raw (required)
+      -12.00,
+      'USD',
+      'expense',
+      'manual',
+      'hash2',
+      now,
+      now
+    );
+
+    db.prepare(`
+      INSERT INTO transactions (id, account_id, date, merchant, merchant_raw, amount, currency, type, source_type, source_hash, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'txn-3',
+      'acc-1',
+      '2025-01-17',
+      'Unknown Store',       // Normalized
+      'UNKNOWN STORE 123',   // Raw (required)
+      -25.00,
+      'USD',
+      'expense',
+      'manual',
+      'hash3',
+      now,
+      now
+    );
+
+    // Run bulk categorization
+    const updated = bulkAutoCategorize(db);
+
+    expect(updated).toBe(2); // Starbucks and Uber
+
+    // Verify categories assigned
+    const txn1 = db.prepare('SELECT category_id FROM transactions WHERE id = ?').get('txn-1');
+    const txn2 = db.prepare('SELECT category_id FROM transactions WHERE id = ?').get('txn-2');
+    const txn3 = db.prepare('SELECT category_id FROM transactions WHERE id = ?').get('txn-3');
+
+    expect(txn1.category_id).toBe('cat_food');
+    expect(txn2.category_id).toBe('cat_transport');
+    expect(txn3.category_id).toBeNull(); // Unknown merchant stays null
+  });
+
+  test('bulkAutoCategorize does not override existing categories', () => {
+    const now = new Date().toISOString();
+
+    // Create test account first (foreign key constraint)
+    db.prepare(`
+      INSERT INTO accounts (id, name, type, institution, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('acc-1', 'Test Account', 'checking', 'Test Bank', now, now);
+
+    // Insert transaction with existing category
+    db.prepare(`
+      INSERT INTO transactions (id, account_id, date, merchant, merchant_raw, amount, currency, type, category_id, source_type, source_hash, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'txn-1',
+      'acc-1',
+      '2025-01-15',
+      'Starbucks',           // Normalized
+      'STARBUCKS #12345',    // Raw (required)
+      -5.50,
+      'USD',
+      'expense',
+      'cat_shopping',        // User manually set to Shopping (not Food)
+      'manual',
+      'hash1',
+      now,
+      now
+    );
+
+    // Run bulk categorization
+    const updated = bulkAutoCategorize(db);
+
+    expect(updated).toBe(0); // Nothing updated (already has category)
+
+    // Verify category unchanged
+    const txn1 = db.prepare('SELECT category_id FROM transactions WHERE id = ?').get('txn-1');
+    expect(txn1.category_id).toBe('cat_shopping'); // Still Shopping
+  });
+
+  test('normalization rules with null category_id are ignored', () => {
+    // Create a rule with no category
+    db.prepare(`
+      INSERT INTO normalization_rules (id, pattern, normalized_name, priority, match_type, category_id, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'rule-nocategory',
+      'Test Merchant',
+      'Test Merchant',
+      0,                // Priority
+      'exact',          // Match type
+      null,             // No category
+      1,                // Active
+      new Date().toISOString(),
+      new Date().toISOString()
+    );
+
+    const categoryId = getCategoryForMerchant(db, 'Test Merchant');
+    expect(categoryId).toBeNull(); // Should return null (rule has no category)
+  });
+});
+@
+
+---
+
+### ✅ Test Coverage: Auto-Categorization
+
+**Tests cubiertos**:
+1. ✅ getCategoryForMerchant returns correct category
+2. ✅ getCategoryForMerchant returns null for unknown merchant
+3. ✅ getCategoryForMerchant returns null for null merchant
+4. ✅ Different merchants get different categories
+5. ✅ bulkAutoCategorize updates transactions without categories
+6. ✅ bulkAutoCategorize does not override existing categories
+7. ✅ Normalization rules with null category_id are ignored
+
+---
+
+### 📊 Status: Task 16 Complete
+
+**Output**:
+- ✅ `migrations/003-add-category-to-rules.sql` - Add category_id column
+- ✅ `src/db/update-normalization-rules-categories.sql` - Update existing rules
+- ✅ `src/lib/auto-categorization.js` - Auto-categorization logic
+- ✅ `tests/auto-categorization.test.js` - 7 tests
+
+**Total**: ~200 LOC (estimado correcto)
+
+**Next**: Task 17 - Categories UI
+
+---
+
