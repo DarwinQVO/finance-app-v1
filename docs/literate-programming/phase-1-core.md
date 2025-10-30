@@ -1,8 +1,8 @@
 # Phase 1: Core - Literate Programming
 
 **Status**: 🟡 In Progress
-**LOC Target**: ~1,800
-**LOC Written**: 750 / 1,800 (42%)
+**LOC Target**: ~1,800 (code) + ~1,800 (tests) = ~3,600 total
+**LOC Written**: 980 / 3,600 (27%)
 
 ---
 
@@ -681,6 +681,261 @@ Pero eso es Task 2. Por ahora, **el contrato está establecido**. Sabemos exacta
 
 ---
 
+### Tests del Schema
+
+Los tests demuestran que el schema funciona correctamente. Usamos **better-sqlite3** con base de datos en memoria (`:memory:`) para tests rápidos sin tocar disco.
+
+```javascript
+// tests/schema.test.js
+import Database from 'better-sqlite3';
+import fs from 'fs';
+
+// Leer el schema SQL
+const schemaSQL = fs.readFileSync('src/db/schema.sql', 'utf-8');
+
+describe('Database Schema', () => {
+  let db;
+
+  beforeEach(() => {
+    // Nueva DB en memoria para cada test
+    db = new Database(':memory:');
+    db.exec(schemaSQL);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  // ============================================================
+  // Test 1: Schema se crea sin errores
+  // ============================================================
+  test('creates all tables correctly', () => {
+    const tables = db.prepare(`
+      SELECT name FROM sqlite_master
+      WHERE type='table' AND name NOT LIKE 'sqlite_%'
+      ORDER BY name
+    `).all();
+
+    const tableNames = tables.map(t => t.name);
+
+    expect(tableNames).toContain('transactions');
+    expect(tableNames).toContain('accounts');
+    expect(tableNames).toContain('parser_configs');
+    expect(tableNames).toContain('normalization_rules');
+    expect(tableNames).toContain('rfc_registry');
+  });
+
+  // ============================================================
+  // Test 2: transactions table tiene todos los campos
+  // ============================================================
+  test('transactions table has all required fields', () => {
+    const columns = db.prepare("PRAGMA table_info(transactions)").all();
+    const columnNames = columns.map(c => c.name);
+
+    // Campos básicos
+    expect(columnNames).toContain('id');
+    expect(columnNames).toContain('account_id');
+    expect(columnNames).toContain('date');
+    expect(columnNames).toContain('merchant');
+    expect(columnNames).toContain('amount');
+
+    // Edge case fields
+    expect(columnNames).toContain('amount_original');
+    expect(columnNames).toContain('currency_original');
+    expect(columnNames).toContain('exchange_rate');
+    expect(columnNames).toContain('is_reversal');
+    expect(columnNames).toContain('is_pending');
+    expect(columnNames).toContain('rfc');
+    expect(columnNames).toContain('transfer_pair_id');
+  });
+
+  // ============================================================
+  // Test 3: UNIQUE constraint en source_hash funciona
+  // Edge Case: Deduplicación - mismo file subido dos veces
+  // ============================================================
+  test('enforces UNIQUE constraint on source_hash', () => {
+    const insert = db.prepare(`
+      INSERT INTO transactions (
+        id, account_id, date, merchant, merchant_raw, amount,
+        currency, type, source_type, source_hash, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    // Primera inserción: OK
+    insert.run(
+      '1', 'acct-1', '2025-01-01', 'Starbucks', 'STARBUCKS #123',
+      -5.67, 'USD', 'expense', 'pdf', 'hash-abc123',
+      '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z'
+    );
+
+    // Segunda inserción con MISMO hash: debe fallar
+    expect(() => {
+      insert.run(
+        '2', 'acct-1', '2025-01-01', 'Starbucks', 'STARBUCKS #123',
+        -5.67, 'USD', 'expense', 'pdf', 'hash-abc123',
+        '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z'
+      );
+    }).toThrow(/UNIQUE constraint failed.*source_hash/);
+  });
+
+  // ============================================================
+  // Test 4: Foreign key constraints funcionan
+  // ============================================================
+  test('enforces foreign key to accounts table', () => {
+    // Habilitar foreign keys (SQLite las tiene OFF por default)
+    db.pragma('foreign_keys = ON');
+
+    // Intentar insertar transaction con account_id que no existe
+    const insert = db.prepare(`
+      INSERT INTO transactions (
+        id, account_id, date, merchant, merchant_raw, amount,
+        currency, type, source_type, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    expect(() => {
+      insert.run(
+        '1', 'nonexistent-account', '2025-01-01', 'Starbucks', 'STARBUCKS',
+        -5.67, 'USD', 'expense', 'pdf',
+        '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z'
+      );
+    }).toThrow(/FOREIGN KEY constraint failed/);
+  });
+
+  // ============================================================
+  // Test 5: Defaults se aplican correctamente
+  // ============================================================
+  test('applies default values correctly', () => {
+    // Primero crear account válido
+    db.prepare(`
+      INSERT INTO accounts (id, name, institution, currency, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('acct-1', 'Test Account', 'Test Bank', 'USD', '2025-01-01', '2025-01-01');
+
+    // Insertar transaction sin especificar campos con defaults
+    db.prepare(`
+      INSERT INTO transactions (
+        id, account_id, date, merchant, merchant_raw, amount,
+        currency, type, source_type, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      '1', 'acct-1', '2025-01-01', 'Starbucks', 'STARBUCKS',
+      -5.67, 'USD', 'expense', 'pdf',
+      '2025-01-01T00:00:00Z', '2025-01-01T00:00:00Z'
+    );
+
+    const txn = db.prepare('SELECT * FROM transactions WHERE id = ?').get('1');
+
+    // Defaults deben estar aplicados
+    expect(txn.is_edited).toBe(0); // SQLite usa 0/1 para boolean
+    expect(txn.is_pending).toBe(0);
+    expect(txn.is_reversal).toBe(0);
+    expect(txn.is_cash_advance).toBe(0);
+  });
+
+  // ============================================================
+  // Test 6: Indexes existen
+  // Performance - queries deben ser rápidas
+  // ============================================================
+  test('creates all indexes', () => {
+    const indexes = db.prepare(`
+      SELECT name FROM sqlite_master
+      WHERE type='index' AND name NOT LIKE 'sqlite_%'
+      ORDER BY name
+    `).all();
+
+    const indexNames = indexes.map(i => i.name);
+
+    // Indexes críticos
+    expect(indexNames).toContain('idx_transactions_date');
+    expect(indexNames).toContain('idx_transactions_account_date');
+    expect(indexNames).toContain('idx_transactions_source_hash');
+    expect(indexNames).toContain('idx_transactions_pending');
+    expect(indexNames).toContain('idx_transactions_transfer_pair');
+  });
+
+  // ============================================================
+  // Test 7: rfc_registry seed data
+  // Edge Case #21: México tax IDs
+  // ============================================================
+  test('seeds rfc_registry with common merchants', () => {
+    const count = db.prepare('SELECT COUNT(*) as count FROM rfc_registry').get();
+
+    expect(count.count).toBeGreaterThan(0);
+
+    // Verificar merchants específicos
+    const uber = db.prepare('SELECT * FROM rfc_registry WHERE rfc = ?').get('UPM200220LK5');
+    expect(uber).toBeDefined();
+    expect(uber.merchant_name).toBe('Uber');
+    expect(uber.verified).toBe(1);
+  });
+
+  // ============================================================
+  // Test 8: accounts.type field
+  // Edge Case #19: Credit card vs checking
+  // ============================================================
+  test('accounts table has type field with default', () => {
+    db.prepare(`
+      INSERT INTO accounts (id, name, institution, currency, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('acct-1', 'Test', 'Bank', 'USD', '2025-01-01', '2025-01-01');
+
+    const account = db.prepare('SELECT * FROM accounts WHERE id = ?').get('acct-1');
+
+    // Default debe ser 'checking'
+    expect(account.type).toBe('checking');
+  });
+
+  // ============================================================
+  // Test 9: Edge case fields para multi-currency
+  // Edge Case #2: Multi-Moneda
+  // ============================================================
+  test('transactions table supports multi-currency fields', () => {
+    db.prepare(`
+      INSERT INTO accounts (id, name, institution, currency, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('acct-1', 'Test', 'Bank', 'USD', '2025-01-01', '2025-01-01');
+
+    // Transacción multi-currency: 1,900 MXN = 97.25 USD
+    db.prepare(`
+      INSERT INTO transactions (
+        id, account_id, date, merchant, merchant_raw, amount, currency,
+        amount_original, currency_original, exchange_rate,
+        type, source_type, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      '1', 'acct-1', '2025-04-26', 'Cocobongo', 'MERPAGO*COCOBONGO',
+      97.25, 'USD', 1900.00, 'MXN', 19.538,
+      'expense', 'pdf', '2025-04-26', '2025-04-26'
+    );
+
+    const txn = db.prepare('SELECT * FROM transactions WHERE id = ?').get('1');
+
+    expect(txn.amount).toBe(97.25); // USD amount
+    expect(txn.amount_original).toBe(1900.00); // MXN amount
+    expect(txn.currency_original).toBe('MXN');
+    expect(txn.exchange_rate).toBe(19.538);
+  });
+});
+```
+
+**¿Qué demuestran estos tests?**
+
+✅ **Schema se crea correctamente** - Todas las tablas existen
+✅ **Deduplicación funciona** - UNIQUE constraint en source_hash
+✅ **Foreign keys funcionan** - No puedes insertar transaction sin account
+✅ **Defaults se aplican** - is_edited, is_pending, etc = FALSE por default
+✅ **Indexes existen** - Queries serán rápidas
+✅ **RFC registry tiene seed data** - Merchants mexicanos comunes
+✅ **Multi-currency funciona** - Campos amount_original, exchange_rate
+✅ **Account types funcionan** - Default es 'checking'
+
+**Tests son ejecutables**. Puedes correr `npm test` y verificar que TODO funciona ANTES de escribir el ParserEngine.
+
+Esto es **literate programming completo**: Prosa + Código + Tests que demuestran que funciona.
+
+---
+
 **LOC Count:**
 - CREATE TABLE transactions: ~115 lines
 - CREATE TABLE accounts: ~25 lines
@@ -688,7 +943,8 @@ Pero eso es Task 2. Por ahora, **el contrato está establecido**. Sabemos exacta
 - CREATE TABLE normalization_rules: ~20 lines
 - CREATE TABLE rfc_registry: ~15 lines
 - Indexes: ~50 lines
-- **Total: ~250 LOC** (objetivo era 200, pero edge cases justifican las 50 extra)
+- **Tests**: ~230 lines (9 test cases)
+- **Total: ~480 LOC** (250 SQL + 230 tests)
 
 ---
 
