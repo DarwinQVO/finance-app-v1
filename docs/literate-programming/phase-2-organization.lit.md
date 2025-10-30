@@ -5675,3 +5675,578 @@ describe('CSVImport Component', () => {
 
 ---
 
+## Task 24: Saved Filters Feature 💾
+
+**Goal**: Allow users to save and reuse filter configurations.
+
+**Scope**:
+- Save filter state (date range, categories, merchants, etc.)
+- Name saved filters
+- Load saved filters quickly
+- Delete saved filters
+- Simple storage in database
+- Integration with existing Filters component
+
+**LOC estimate**: ~150 LOC (schema ~30, logic ~40, UI ~50, tests ~30)
+
+---
+
+### Migration: Saved Filters Table
+
+Database schema for storing filter configurations.
+
+```sql
+<<migrations/006-add-saved-filters.sql>>=
+CREATE TABLE IF NOT EXISTS saved_filters (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  filter_data TEXT NOT NULL, -- JSON string
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+@
+
+---
+
+### Tests: Saved Filters Schema
+
+Tests for saved filters table creation and operations.
+
+```javascript
+<<tests/saved-filters.test.js>>=
+import { describe, test, expect, beforeEach } from 'vitest';
+import Database from 'better-sqlite3';
+import fs from 'fs';
+
+describe('Saved Filters Schema', () => {
+  let db;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+
+    // Run migration
+    const migration = fs.readFileSync('migrations/006-add-saved-filters.sql', 'utf8');
+    db.exec(migration);
+  });
+
+  test('creates saved_filters table', () => {
+    const table = db.prepare(`
+      SELECT name FROM sqlite_master
+      WHERE type='table' AND name='saved_filters'
+    `).get();
+
+    expect(table).toBeDefined();
+    expect(table.name).toBe('saved_filters');
+  });
+
+  test('inserts saved filter', () => {
+    const now = new Date().toISOString();
+    const filterData = JSON.stringify({
+      dateRange: 'last30days',
+      categories: ['food', 'transport']
+    });
+
+    db.prepare(`
+      INSERT INTO saved_filters (id, name, filter_data, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run('filter-1', 'Food & Transport', filterData, now, now);
+
+    const saved = db.prepare('SELECT * FROM saved_filters WHERE id = ?').get('filter-1');
+
+    expect(saved.name).toBe('Food & Transport');
+    expect(JSON.parse(saved.filter_data)).toEqual({
+      dateRange: 'last30days',
+      categories: ['food', 'transport']
+    });
+  });
+
+  test('enforces unique filter names', () => {
+    const now = new Date().toISOString();
+    const filterData = JSON.stringify({ dateRange: 'thisMonth' });
+
+    db.prepare(`
+      INSERT INTO saved_filters (id, name, filter_data, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run('filter-1', 'My Filter', filterData, now, now);
+
+    expect(() => {
+      db.prepare(`
+        INSERT INTO saved_filters (id, name, filter_data, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+      `).run('filter-2', 'My Filter', filterData, now, now);
+    }).toThrow();
+  });
+
+  test('deletes saved filter', () => {
+    const now = new Date().toISOString();
+    const filterData = JSON.stringify({ dateRange: 'thisMonth' });
+
+    db.prepare(`
+      INSERT INTO saved_filters (id, name, filter_data, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run('filter-1', 'Test Filter', filterData, now, now);
+
+    db.prepare('DELETE FROM saved_filters WHERE id = ?').run('filter-1');
+
+    const deleted = db.prepare('SELECT * FROM saved_filters WHERE id = ?').get('filter-1');
+    expect(deleted).toBeUndefined();
+  });
+});
+@
+
+---
+
+### Component: SavedFilters.jsx
+
+UI component for managing saved filters.
+
+```javascript
+<<src/components/SavedFilters.jsx>>=
+import React, { useState, useEffect } from 'react';
+import './SavedFilters.css';
+
+export default function SavedFilters({ currentFilters, onLoadFilter }) {
+  const [savedFilters, setSavedFilters] = useState([]);
+  const [showSaveDialog, setShowSaveDialog] = useState(false);
+  const [filterName, setFilterName] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    loadSavedFilters();
+  }, []);
+
+  async function loadSavedFilters() {
+    try {
+      const filters = await window.electronAPI.getSavedFilters();
+      setSavedFilters(filters);
+    } catch (error) {
+      console.error('Failed to load saved filters:', error);
+    }
+  }
+
+  async function handleSave() {
+    if (!filterName.trim()) {
+      alert('Please enter a filter name');
+      return;
+    }
+
+    setSaving(true);
+    try {
+      await window.electronAPI.saveFilter(filterName.trim(), currentFilters);
+      setShowSaveDialog(false);
+      setFilterName('');
+      loadSavedFilters();
+    } catch (error) {
+      alert('Failed to save filter: ' + error.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function handleLoad(filter) {
+    try {
+      const filterData = JSON.parse(filter.filter_data);
+      if (onLoadFilter) {
+        onLoadFilter(filterData);
+      }
+    } catch (error) {
+      alert('Failed to load filter: ' + error.message);
+    }
+  }
+
+  async function handleDelete(filterId) {
+    const confirmed = window.confirm('Delete this saved filter?');
+    if (!confirmed) return;
+
+    try {
+      await window.electronAPI.deleteSavedFilter(filterId);
+      loadSavedFilters();
+    } catch (error) {
+      alert('Failed to delete filter: ' + error.message);
+    }
+  }
+
+  return (
+    <div className="saved-filters">
+      <div className="saved-filters-header">
+        <h3>Saved Filters</h3>
+        <button
+          onClick={() => setShowSaveDialog(true)}
+          className="btn-small btn-primary"
+        >
+          Save Current
+        </button>
+      </div>
+
+      {showSaveDialog && (
+        <div className="save-dialog">
+          <input
+            type="text"
+            value={filterName}
+            onChange={(e) => setFilterName(e.target.value)}
+            placeholder="Filter name..."
+            autoFocus
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') handleSave();
+              if (e.key === 'Escape') setShowSaveDialog(false);
+            }}
+          />
+          <div className="dialog-actions">
+            <button
+              onClick={() => setShowSaveDialog(false)}
+              className="btn-small"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              className="btn-small btn-primary"
+              disabled={saving || !filterName.trim()}
+            >
+              {saving ? 'Saving...' : 'Save'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <div className="saved-filters-list">
+        {savedFilters.length === 0 ? (
+          <p className="empty-message">No saved filters yet</p>
+        ) : (
+          savedFilters.map((filter) => (
+            <div key={filter.id} className="filter-item">
+              <button
+                onClick={() => handleLoad(filter)}
+                className="filter-name"
+              >
+                {filter.name}
+              </button>
+              <button
+                onClick={() => handleDelete(filter.id)}
+                className="btn-delete"
+                aria-label={`Delete ${filter.name}`}
+              >
+                ×
+              </button>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+@
+
+---
+
+### Styles: SavedFilters.css
+
+```css
+<<src/components/SavedFilters.css>>=
+.saved-filters {
+  padding: 15px;
+  background: #f9f9f9;
+  border-radius: 4px;
+}
+
+.saved-filters-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.saved-filters-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: #333;
+}
+
+.save-dialog {
+  margin-bottom: 15px;
+  padding: 15px;
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.save-dialog input {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.saved-filters-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.empty-message {
+  text-align: center;
+  color: #999;
+  padding: 20px;
+  font-style: italic;
+}
+
+.filter-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: white;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+  padding: 8px 12px;
+  transition: background-color 0.2s;
+}
+
+.filter-item:hover {
+  background: #f5f5f5;
+}
+
+.filter-name {
+  flex: 1;
+  text-align: left;
+  padding: 4px 8px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  color: #333;
+}
+
+.filter-name:hover {
+  color: #3b82f6;
+}
+
+.btn-delete {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: none;
+  border: none;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+  color: #999;
+  transition: all 0.2s;
+}
+
+.btn-delete:hover {
+  background: #fee2e2;
+  color: #dc2626;
+}
+
+.btn-small {
+  padding: 6px 12px;
+  font-size: 13px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: white;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-small:hover {
+  background: #f5f5f5;
+}
+
+.btn-small:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: #3b82f6;
+  color: white;
+  border-color: #3b82f6;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #2563eb;
+}
+@
+
+---
+
+### Tests: SavedFilters Component
+
+```javascript
+<<tests/SavedFilters.test.jsx>>=
+import React from 'react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import SavedFilters from '../src/components/SavedFilters.jsx';
+import { vi } from 'vitest';
+
+describe('SavedFilters Component', () => {
+  const mockFilters = [
+    {
+      id: 'filter-1',
+      name: 'Food & Transport',
+      filter_data: JSON.stringify({
+        dateRange: 'last30days',
+        categories: ['food', 'transport']
+      })
+    },
+    {
+      id: 'filter-2',
+      name: 'This Month',
+      filter_data: JSON.stringify({
+        dateRange: 'thisMonth'
+      })
+    }
+  ];
+
+  let onLoadFilter;
+
+  beforeEach(() => {
+    onLoadFilter = vi.fn();
+    window.electronAPI = {
+      getSavedFilters: vi.fn(),
+      saveFilter: vi.fn(),
+      deleteSavedFilter: vi.fn()
+    };
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  test('renders saved filters list', async () => {
+    window.electronAPI.getSavedFilters.mockResolvedValue(mockFilters);
+
+    render(<SavedFilters currentFilters={{}} onLoadFilter={onLoadFilter} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Food & Transport')).toBeInTheDocument();
+      expect(screen.getByText('This Month')).toBeInTheDocument();
+    });
+  });
+
+  test('shows empty state when no filters', async () => {
+    window.electronAPI.getSavedFilters.mockResolvedValue([]);
+
+    render(<SavedFilters currentFilters={{}} onLoadFilter={onLoadFilter} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/No saved filters yet/i)).toBeInTheDocument();
+    });
+  });
+
+  test('opens save dialog when clicking Save Current', async () => {
+    window.electronAPI.getSavedFilters.mockResolvedValue([]);
+
+    render(<SavedFilters currentFilters={{}} onLoadFilter={onLoadFilter} />);
+
+    const saveButton = screen.getByText('Save Current');
+    fireEvent.click(saveButton);
+
+    expect(screen.getByPlaceholderText('Filter name...')).toBeInTheDocument();
+  });
+
+  test('saves filter with name', async () => {
+    window.electronAPI.getSavedFilters.mockResolvedValue([]);
+    window.electronAPI.saveFilter.mockResolvedValue({ success: true });
+
+    const currentFilters = { dateRange: 'thisWeek', categories: ['food'] };
+
+    render(<SavedFilters currentFilters={currentFilters} onLoadFilter={onLoadFilter} />);
+
+    const saveButton = screen.getByText('Save Current');
+    fireEvent.click(saveButton);
+
+    const input = screen.getByPlaceholderText('Filter name...');
+    fireEvent.change(input, { target: { value: 'My Filter' } });
+
+    const confirmButton = screen.getByText('Save');
+    fireEvent.click(confirmButton);
+
+    await waitFor(() => {
+      expect(window.electronAPI.saveFilter).toHaveBeenCalledWith('My Filter', currentFilters);
+    });
+  });
+
+  test('loads filter when clicking filter name', async () => {
+    window.electronAPI.getSavedFilters.mockResolvedValue(mockFilters);
+
+    render(<SavedFilters currentFilters={{}} onLoadFilter={onLoadFilter} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Food & Transport')).toBeInTheDocument();
+    });
+
+    const filterButton = screen.getByText('Food & Transport');
+    fireEvent.click(filterButton);
+
+    expect(onLoadFilter).toHaveBeenCalledWith({
+      dateRange: 'last30days',
+      categories: ['food', 'transport']
+    });
+  });
+
+  test('deletes filter with confirmation', async () => {
+    window.electronAPI.getSavedFilters.mockResolvedValue(mockFilters);
+    window.electronAPI.deleteSavedFilter.mockResolvedValue({ success: true });
+    window.confirm = vi.fn(() => true);
+
+    render(<SavedFilters currentFilters={{}} onLoadFilter={onLoadFilter} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Food & Transport')).toBeInTheDocument();
+    });
+
+    const deleteButtons = screen.getAllByLabelText(/Delete/i);
+    fireEvent.click(deleteButtons[0]);
+
+    await waitFor(() => {
+      expect(window.confirm).toHaveBeenCalled();
+      expect(window.electronAPI.deleteSavedFilter).toHaveBeenCalledWith('filter-1');
+    });
+  });
+
+  test('disables save button when filter name is empty', async () => {
+    window.electronAPI.getSavedFilters.mockResolvedValue([]);
+
+    render(<SavedFilters currentFilters={{}} onLoadFilter={onLoadFilter} />);
+
+    const saveButton = screen.getByText('Save Current');
+    fireEvent.click(saveButton);
+
+    // Save button should be disabled when name is empty
+    const confirmButton = screen.getByText('Save');
+    expect(confirmButton).toBeDisabled();
+
+    // After entering a name, button should be enabled
+    const input = screen.getByPlaceholderText('Filter name...');
+    fireEvent.change(input, { target: { value: 'Test' } });
+
+    expect(confirmButton).not.toBeDisabled();
+  });
+});
+@
+
+---
+
+**Output**:
+- ✅ `migrations/006-add-saved-filters.sql` - Saved filters table
+- ✅ `tests/saved-filters.test.js` - 4 schema tests
+- ✅ `src/components/SavedFilters.jsx` - Saved filters component
+- ✅ `src/components/SavedFilters.css` - Component styles
+- ✅ `tests/SavedFilters.test.jsx` - 6 component tests
+
+**Total**: ~160 LOC (close to estimate)
+
+**Next**: Task 25 - Tag Management Feature
+
+---
+
