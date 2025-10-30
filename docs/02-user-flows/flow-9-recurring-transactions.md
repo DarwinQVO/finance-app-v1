@@ -283,6 +283,12 @@ CREATE TABLE recurring_groups (
 );
 ```
 
+**Relationship con transactions**:
+- `transactions.recurring_group_id` (optional) - Puede cachear el grupo detectado
+- **NO es FK requerido** - Sistema usa matching dinámico por merchant + amount
+- Útil para performance: evita re-calcular patterns cada vez
+- Si es NULL, el sistema detecta el pattern on-the-fly
+
 ---
 
 ### Detection algorithm

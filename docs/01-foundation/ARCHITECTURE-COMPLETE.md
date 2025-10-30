@@ -168,22 +168,34 @@ CREATE TABLE transactions (
   -- RELATIONSHIPS
   -- ==========================================
   transfer_pair_id TEXT,            -- Link a otra transaction (transfer)
-  recurring_group_id TEXT,          -- Link a recurring_groups table
+  recurring_group_id TEXT,          -- Link a recurring_groups table (optional - Phase 2)
   receivable_id TEXT,               -- Link a receivables table (cuando es pago de invoice)
   split_parent_id TEXT,             -- Si es parte de split transaction
+  refund_link_id TEXT,              -- Link a original transaction if this is a refund (Phase 2)
+  pending_link_id TEXT,             -- Link pending → posted transaction (Phase 1)
 
   -- ==========================================
-  -- BUDGETS (Phase 2)
+  -- BUDGETS & TAX (Phase 2-3)
   -- ==========================================
   applies_to_budget_ids TEXT,       -- JSON array de budget IDs
 
+  tax_deduction_percentage INTEGER DEFAULT 100,  -- 0-100% deductible (Phase 3)
+  tax_category TEXT,                             -- Tax category (Schedule C, A, etc.)
+  tax_notes TEXT,                                -- Notes for tax filing
+
   -- ==========================================
-  -- FLAGS
+  -- FLAGS & STATUS
   -- ==========================================
   is_duplicate BOOLEAN DEFAULT FALSE,
   is_pending BOOLEAN DEFAULT FALSE,
   is_reconciled BOOLEAN DEFAULT FALSE,
   is_tax_deductible BOOLEAN DEFAULT FALSE,
+
+  status TEXT DEFAULT 'posted',     -- pending | posted | cancelled (Phase 1)
+  status_changed_at TEXT,           -- When status changed from pending → posted
+
+  refund_status TEXT,               -- NULL | 'original' | 'refund' | 'disputed' (Phase 2)
+  refund_amount REAL,               -- Amount of refund if partial
 
   -- ==========================================
   -- TIMESTAMPS
