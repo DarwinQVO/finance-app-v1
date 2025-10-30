@@ -1362,3 +1362,212 @@ test('normalizes all 8 UBER formats from real bank statements', () => {
 - Case insensitive → "UBER" = "uber" = "Uber"
 
 **Status**: ✅ Task 4 completada con tests ejecutables
+
+---
+
+## 5. Normalization Rules Seed Data
+
+Las reglas de normalización son el **conocimiento del sistema**. Cada regla es un patrón aprendido de cómo los bancos escriben merchants. Sin estas reglas, el engine es inútil.
+
+### Por qué seed data
+
+Task 4 creó el engine. Task 5 le da el conocimiento inicial. Estas ~30 reglas cubren los merchants más comunes que aparecen en bank statements reales:
+- **Tech**: Uber, Netflix, Spotify, OpenAI, Apple, Amazon, Google
+- **Food**: Starbucks, McDonald's, Subway, Chipotle
+- **Retail**: Target, Walmart, Costco, CVS
+- **México**: OXXO, CFE, Telmex, Liverpool
+
+### Estrategia de prioridad
+
+- **Alta priority (200+)**: Reglas específicas (ej: "UBER.*EATS" → "Uber Eats")
+- **Media priority (100)**: Reglas moderadas (ej: "STARBUCKS.*" → "Starbucks")
+- **Baja priority (50)**: Reglas catch-all (ej: ".*UBER.*" → "Uber")
+
+El engine prueba high → low. Esto permite capturar casos específicos primero, luego hacer fallback a general.
+
+---
+
+<<src/db/seed-normalization-rules.sql>>=
+-- ============================================================
+-- Normalization Rules Seed Data
+-- ~30 reglas para merchants comunes
+-- ============================================================
+
+<<normalization-rules-tech>>
+<<normalization-rules-food>>
+<<normalization-rules-retail>>
+<<normalization-rules-mexico>>
+@
+
+<<normalization-rules-tech>>=
+-- TECH COMPANIES
+-- Priority 200: Reglas específicas primero
+INSERT INTO normalization_rules (id, pattern, normalized_name, match_type, priority, is_active, created_at, updated_at)
+VALUES
+  ('norm-uber-eats', 'UBER.*EATS', 'Uber Eats', 'regex', 200, TRUE, datetime('now'), datetime('now')),
+  ('norm-uber-trip', 'ST UBER.*', 'Uber', 'regex', 200, TRUE, datetime('now'), datetime('now')),
+  ('norm-uber-general', '.*UBER.*', 'Uber', 'regex', 50, TRUE, datetime('now'), datetime('now')),
+
+  ('norm-netflix', '.*NETFLIX.*', 'Netflix', 'regex', 100, TRUE, datetime('now'), datetime('now')),
+  ('norm-spotify', '.*SPOTIFY.*', 'Spotify', 'regex', 100, TRUE, datetime('now'), datetime('now')),
+
+  ('norm-openai-chatgpt', 'OPENAI.*CHATGPT', 'OpenAI ChatGPT', 'regex', 200, TRUE, datetime('now'), datetime('now')),
+  ('norm-openai', 'OPENAI.*', 'OpenAI', 'regex', 100, TRUE, datetime('now'), datetime('now')),
+
+  ('norm-apple', 'APPLE.COM.*', 'Apple', 'regex', 100, TRUE, datetime('now'), datetime('now')),
+  ('norm-amazon-prime', 'AMAZON.*PRIME', 'Amazon Prime', 'regex', 200, TRUE, datetime('now'), datetime('now')),
+  ('norm-amazon-aws', 'AWS.*|AMAZON WEB SERVICES', 'Amazon AWS', 'regex', 200, TRUE, datetime('now'), datetime('now')),
+  ('norm-amazon', '.*AMAZON.*', 'Amazon', 'regex', 50, TRUE, datetime('now'), datetime('now')),
+
+  ('norm-google', 'GOOGLE.*', 'Google', 'regex', 100, TRUE, datetime('now'), datetime('now')),
+  ('norm-github', 'GITHUB.*', 'GitHub', 'regex', 100, TRUE, datetime('now'), datetime('now')),
+  ('norm-stripe', '^STRIPE\\s', 'Stripe', 'regex', 100, TRUE, datetime('now'), datetime('now'));
+@
+
+<<normalization-rules-food>>=
+-- FOOD & RESTAURANTS
+INSERT INTO normalization_rules (id, pattern, normalized_name, match_type, priority, is_active, created_at, updated_at)
+VALUES
+  ('norm-starbucks', '.*STARBUCKS.*', 'Starbucks', 'regex', 100, TRUE, datetime('now'), datetime('now')),
+  ('norm-mcdonalds', '.*MC\\s*DONALD.*|MCD\\s', 'McDonald''s', 'regex', 100, TRUE, datetime('now'), datetime('now')),
+  ('norm-subway', '.*SUBWAY.*', 'Subway', 'regex', 100, TRUE, datetime('now'), datetime('now')),
+  ('norm-chipotle', '.*CHIPOTLE.*', 'Chipotle', 'regex', 100, TRUE, datetime('now'), datetime('now')),
+  ('norm-dominos', '.*DOMINO.*', 'Domino''s Pizza', 'regex', 100, TRUE, datetime('now'), datetime('now'));
+@
+
+<<normalization-rules-retail>>=
+-- RETAIL STORES
+INSERT INTO normalization_rules (id, pattern, normalized_name, match_type, priority, is_active, created_at, updated_at)
+VALUES
+  ('norm-target', '.*TARGET.*', 'Target', 'regex', 100, TRUE, datetime('now'), datetime('now')),
+  ('norm-walmart', '.*WALMART.*|.*WAL-MART.*', 'Walmart', 'regex', 100, TRUE, datetime('now'), datetime('now')),
+  ('norm-costco', '.*COSTCO.*', 'Costco', 'regex', 100, TRUE, datetime('now'), datetime('now')),
+  ('norm-cvs', '.*CVS.*', 'CVS', 'regex', 100, TRUE, datetime('now'), datetime('now')),
+  ('norm-walgreens', '.*WALGREENS.*', 'Walgreens', 'regex', 100, TRUE, datetime('now'), datetime('now'));
+@
+
+<<normalization-rules-mexico>>=
+-- MEXICO-SPECIFIC
+INSERT INTO normalization_rules (id, pattern, normalized_name, match_type, priority, is_active, created_at, updated_at)
+VALUES
+  ('norm-oxxo', '.*OXXO.*', 'OXXO', 'regex', 100, TRUE, datetime('now'), datetime('now')),
+  ('norm-cfe', '.*CFE.*|COMISION FEDERAL', 'CFE', 'regex', 100, TRUE, datetime('now'), datetime('now')),
+  ('norm-telmex', '.*TELMEX.*', 'Telmex', 'regex', 100, TRUE, datetime('now'), datetime('now')),
+  ('norm-liverpool', '.*LIVERPOOL.*', 'Liverpool', 'regex', 100, TRUE, datetime('now'), datetime('now')),
+  ('norm-mercadolibre', '.*MERCADO.*LIBRE.*|MERPAGO', 'Mercado Libre', 'regex', 100, TRUE, datetime('now'), datetime('now'));
+@
+
+---
+
+### Tests del Seed Data
+
+<<tests/normalization-rules-seed.test.js>>=
+import Database from 'better-sqlite3';
+import { readFileSync, unlinkSync } from 'fs';
+
+const schemaSQL = readFileSync('src/db/schema.sql', 'utf-8');
+const seedSQL = readFileSync('src/db/seed-normalization-rules.sql', 'utf-8');
+
+describe('Normalization Rules Seed Data', () => {
+  <<normalization-seed-test-setup>>
+  <<normalization-seed-test-count>>
+  <<normalization-seed-test-priorities>>
+  <<normalization-seed-test-tech>>
+  <<normalization-seed-test-mexico>>
+});
+@
+
+<<normalization-seed-test-setup>>=
+let db;
+let dbPath;
+
+beforeEach(() => {
+  dbPath = `test-${Date.now()}-${Math.random().toString(36).substring(7)}.db`;
+  db = new Database(dbPath);
+  db.exec(schemaSQL);
+  db.exec(seedSQL);
+});
+
+afterEach(() => {
+  db.close();
+  if (dbPath) {
+    try {
+      unlinkSync(dbPath);
+    } catch {}
+  }
+});
+@
+
+<<normalization-seed-test-count>>=
+test('seeds approximately 30 normalization rules', () => {
+  const count = db.prepare('SELECT COUNT(*) as total FROM normalization_rules').get();
+  expect(count.total).toBeGreaterThanOrEqual(28);
+  expect(count.total).toBeLessThanOrEqual(35);
+});
+@
+
+<<normalization-seed-test-priorities>>=
+test('rules have correct priority levels', () => {
+  const highPriority = db.prepare('SELECT COUNT(*) as total FROM normalization_rules WHERE priority >= 200').get();
+  const mediumPriority = db.prepare('SELECT COUNT(*) as total FROM normalization_rules WHERE priority = 100').get();
+  const lowPriority = db.prepare('SELECT COUNT(*) as total FROM normalization_rules WHERE priority = 50').get();
+
+  expect(highPriority.total).toBeGreaterThan(0);  // Specific rules exist
+  expect(mediumPriority.total).toBeGreaterThan(0);  // Medium rules exist
+  expect(lowPriority.total).toBeGreaterThan(0);  // Catch-all rules exist
+});
+@
+
+<<normalization-seed-test-tech>>=
+test('includes common tech companies', () => {
+  const techRules = db.prepare(`
+    SELECT normalized_name FROM normalization_rules
+    WHERE normalized_name IN ('Uber', 'Uber Eats', 'Netflix', 'Spotify', 'OpenAI', 'Amazon', 'Apple', 'Google')
+  `).all();
+
+  expect(techRules.length).toBeGreaterThanOrEqual(7);
+});
+@
+
+<<normalization-seed-test-mexico>>=
+test('includes Mexico-specific merchants', () => {
+  const mexicoRules = db.prepare(`
+    SELECT normalized_name FROM normalization_rules
+    WHERE normalized_name IN ('OXXO', 'CFE', 'Telmex', 'Liverpool', 'Mercado Libre')
+  `).all();
+
+  expect(mexicoRules.length).toBe(5);
+});
+@
+
+---
+
+**Tests Cubiertos:**
+
+✅ **Count** - Seeds ~30 rules (28-35 range)
+✅ **Priority levels** - High (200+), Medium (100), Low (50) all exist
+✅ **Tech companies** - Uber, Netflix, Spotify, OpenAI, Amazon, Apple, Google
+✅ **México merchants** - OXXO, CFE, Telmex, Liverpool, Mercado Libre
+
+**Merchants Incluidos:**
+
+**Tech** (14 rules):
+- Uber (3 rules: Uber Eats, Uber Trip, catch-all)
+- Netflix, Spotify
+- OpenAI (2 rules: ChatGPT, general)
+- Apple
+- Amazon (3 rules: Prime, AWS, general)
+- Google, GitHub, Stripe
+
+**Food** (5 rules):
+- Starbucks, McDonald's, Subway, Chipotle, Domino's
+
+**Retail** (5 rules):
+- Target, Walmart, Costco, CVS, Walgreens
+
+**México** (5 rules):
+- OXXO, CFE, Telmex, Liverpool, Mercado Libre
+
+**Total**: 29 rules covering most common merchants
+
+**Status**: ✅ Task 5 completada con tests ejecutables
