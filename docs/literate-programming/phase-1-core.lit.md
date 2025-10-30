@@ -3803,3 +3803,828 @@ useEffect(() => {
 - Indexed queries en backend (<10ms para 10k txns)
 
 **Status**: ✅ Task 9 completada con tests ejecutables
+
+---
+
+## 🎯 Task 10: Transaction Detail View Component
+
+**Objetivo**: Crear panel lateral para mostrar/editar todos los detalles de una transacción
+
+**Referencias**:
+- [flow-3-view-timeline.md](../02-user-flows/flow-3-view-timeline.md)
+- [flow-4-categorize.md](../02-user-flows/flow-4-categorize.md)
+
+**Features**:
+- ✅ Side panel that slides in from right
+- ✅ Show all transaction fields (date, merchant, amount, fees, etc.)
+- ✅ Edit merchant name
+- ✅ Add notes
+- ✅ Close button
+- ✅ Read-only for now (full edit in later phase)
+
+**Output**: `src/components/TransactionDetail.jsx`, `src/components/TransactionDetail.css`, `tests/TransactionDetail.test.jsx`
+
+---
+
+### TransactionDetail Component
+
+El componente `TransactionDetail` es un **side panel** que muestra todos los detalles de una transacción cuando el usuario hace click en un item del Timeline.
+
+**User Flow**:
+1. Usuario hace click en transaction en Timeline
+2. Panel slide-in desde la derecha
+3. Muestra todos los campos (incluso los NULL/hidden)
+4. Usuario puede editar merchant name, agregar notes
+5. Click afuera o botón X cierra el panel
+
+**Arquitectura**:
+
+```
+┌──────────────────┬─────────────────────┐
+│                  │ TransactionDetail   │
+│   Timeline       │ ┌─────────────────┐ │
+│                  │ │ [X]             │ │
+│   [Transaction]◄─┼─┤                 │ │
+│   [Transaction]  │ │ Merchant: Uber  │ │
+│   [Transaction]  │ │ Amount: -$25.00 │ │
+│   [Transaction]  │ │ Date: Jan 15    │ │
+│                  │ │                 │ │
+│                  │ │ Original Amt:   │ │
+│                  │ │ $22.00 EUR      │ │
+│                  │ │                 │ │
+│                  │ │ Notes:          │ │
+│                  │ │ [____________]  │ │
+│                  │ │                 │ │
+│                  │ │ [Save]          │ │
+│                  │ └─────────────────┘ │
+└──────────────────┴─────────────────────┘
+```
+
+**Fields Displayed**:
+- **Core**: id, date, merchant (editable), amount, currency
+- **Multi-currency**: original amount, original currency, exchange rate
+- **Fees**: foreign_fee_transaction_id, is_fee_for_transaction_id
+- **Reversals**: is_reversal, reversal_of_transaction_id
+- **Transfers**: is_internal_transfer, transfer_pair_id
+- **Metadata**: account, notes (editable), created_at
+
+<<src/components/TransactionDetail.jsx>>=
+import React, { useState, useEffect } from 'react';
+import './TransactionDetail.css';
+
+/**
+ * TransactionDetail - Side panel showing transaction details
+ *
+ * Features:
+ * - Slide-in animation from right
+ * - Show all transaction fields
+ * - Edit merchant name & notes
+ * - Click outside to close
+ *
+ * Props:
+ * - transaction: Object - Transaction data (null = closed)
+ * - onClose: () => void - Callback when panel closes
+ * - onSave: (updates) => void - Callback when saving changes
+ */
+function TransactionDetail({ transaction, onClose, onSave }) {
+  const [merchantName, setMerchantName] = useState('');
+  const [notes, setNotes] = useState('');
+  const [hasChanges, setHasChanges] = useState(false);
+
+  <<transaction-detail-sync-state>>
+  <<transaction-detail-close-on-escape>>
+  <<transaction-detail-save-handler>>
+
+  if (!transaction) return null;
+
+  return (
+    <>
+      <<transaction-detail-overlay>>
+      <<transaction-detail-panel>>
+    </>
+  );
+}
+
+export default TransactionDetail;
+@
+
+<<transaction-detail-sync-state>>=
+/**
+ * Sync state with transaction prop
+ */
+useEffect(() => {
+  if (transaction) {
+    setMerchantName(transaction.merchant || '');
+    setNotes(transaction.notes || '');
+    setHasChanges(false);
+  }
+}, [transaction]);
+@
+
+<<transaction-detail-close-on-escape>>=
+/**
+ * Close panel on Escape key
+ */
+useEffect(() => {
+  const handleKeyDown = (e) => {
+    if (e.key === 'Escape' && transaction) {
+      onClose();
+    }
+  };
+
+  document.addEventListener('keydown', handleKeyDown);
+  return () => document.removeEventListener('keydown', handleKeyDown);
+}, [transaction, onClose]);
+@
+
+<<transaction-detail-save-handler>>=
+/**
+ * Save changes to transaction
+ */
+const handleSave = () => {
+  if (!hasChanges) return;
+
+  const updates = {
+    id: transaction.id,
+    merchant: merchantName,
+    notes: notes
+  };
+
+  onSave(updates);
+  setHasChanges(false);
+};
+
+const handleMerchantChange = (e) => {
+  setMerchantName(e.target.value);
+  setHasChanges(true);
+};
+
+const handleNotesChange = (e) => {
+  setNotes(e.target.value);
+  setHasChanges(true);
+};
+@
+
+<<transaction-detail-overlay>>=
+<div
+  className="transaction-detail-overlay"
+  onClick={onClose}
+/>
+@
+
+<<transaction-detail-panel>>=
+<div className="transaction-detail-panel">
+  <div className="transaction-detail-header">
+    <h2>Transaction Details</h2>
+    <button
+      className="transaction-detail-close"
+      onClick={onClose}
+    >
+      ✕
+    </button>
+  </div>
+
+  <div className="transaction-detail-body">
+    <<transaction-detail-core-fields>>
+    <<transaction-detail-multicurrency-fields>>
+    <<transaction-detail-fees-fields>>
+    <<transaction-detail-metadata-fields>>
+    <<transaction-detail-notes-field>>
+  </div>
+
+  <div className="transaction-detail-footer">
+    <button
+      className="transaction-detail-save"
+      onClick={handleSave}
+      disabled={!hasChanges}
+    >
+      Save Changes
+    </button>
+  </div>
+</div>
+@
+
+<<transaction-detail-core-fields>>=
+<div className="detail-section">
+  <h3>Core Information</h3>
+
+  <div className="detail-field">
+    <label>Date</label>
+    <span>{new Date(transaction.date).toLocaleDateString('en-US', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    })}</span>
+  </div>
+
+  <div className="detail-field detail-field-editable">
+    <label htmlFor="merchant-name">Merchant</label>
+    <input
+      id="merchant-name"
+      type="text"
+      value={merchantName}
+      onChange={handleMerchantChange}
+      className="detail-input"
+    />
+    <span className="detail-subtext">Original: {transaction.merchant_raw}</span>
+  </div>
+
+  <div className="detail-field">
+    <label>Amount</label>
+    <span className={`detail-amount ${transaction.type}`}>
+      {transaction.amount < 0 ? '-' : '+'}${Math.abs(transaction.amount).toFixed(2)} {transaction.currency}
+    </span>
+  </div>
+
+  <div className="detail-field">
+    <label>Type</label>
+    <span className={`detail-badge ${transaction.type}`}>
+      {transaction.type}
+    </span>
+  </div>
+</div>
+@
+
+<<transaction-detail-multicurrency-fields>>=
+{(transaction.amount_original || transaction.currency_original) && (
+  <div className="detail-section">
+    <h3>Multi-Currency</h3>
+
+    {transaction.amount_original && (
+      <div className="detail-field">
+        <label>Original Amount</label>
+        <span>
+          {transaction.amount_original} {transaction.currency_original}
+        </span>
+      </div>
+    )}
+
+    {transaction.exchange_rate && (
+      <div className="detail-field">
+        <label>Exchange Rate</label>
+        <span>{transaction.exchange_rate}</span>
+      </div>
+    )}
+  </div>
+)}
+@
+
+<<transaction-detail-fees-fields>>=
+{(transaction.foreign_fee_transaction_id || transaction.is_fee_for_transaction_id) && (
+  <div className="detail-section">
+    <h3>Fees & Related</h3>
+
+    {transaction.foreign_fee_transaction_id && (
+      <div className="detail-field">
+        <label>Foreign Fee</label>
+        <span className="detail-link">
+          {transaction.foreign_fee_transaction_id}
+        </span>
+      </div>
+    )}
+
+    {transaction.is_fee_for_transaction_id && (
+      <div className="detail-field">
+        <label>Fee For</label>
+        <span className="detail-link">
+          {transaction.is_fee_for_transaction_id}
+        </span>
+      </div>
+    )}
+  </div>
+)}
+@
+
+<<transaction-detail-metadata-fields>>=
+<div className="detail-section">
+  <h3>Metadata</h3>
+
+  <div className="detail-field">
+    <label>Transaction ID</label>
+    <span className="detail-code">{transaction.id}</span>
+  </div>
+
+  <div className="detail-field">
+    <label>Account</label>
+    <span>{transaction.account_name || transaction.account_id}</span>
+  </div>
+
+  {transaction.is_internal_transfer && (
+    <div className="detail-field">
+      <label>Internal Transfer</label>
+      <span className="detail-badge info">
+        Yes {transaction.transfer_pair_id ? `(Pair: ${transaction.transfer_pair_id})` : ''}
+      </span>
+    </div>
+  )}
+
+  {transaction.is_reversal && (
+    <div className="detail-field">
+      <label>Reversal</label>
+      <span className="detail-badge warning">
+        Reversal of {transaction.reversal_of_transaction_id}
+      </span>
+    </div>
+  )}
+</div>
+@
+
+<<transaction-detail-notes-field>>=
+<div className="detail-section">
+  <h3>Notes</h3>
+
+  <div className="detail-field detail-field-editable">
+    <label htmlFor="notes">Personal Notes</label>
+    <textarea
+      id="notes"
+      value={notes}
+      onChange={handleNotesChange}
+      className="detail-textarea"
+      placeholder="Add notes about this transaction..."
+      rows="4"
+    />
+  </div>
+</div>
+@
+
+---
+
+### TransactionDetail Styles
+
+<<src/components/TransactionDetail.css>>=
+/* Overlay */
+.transaction-detail-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+  animation: fadeIn 0.2s;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Panel */
+.transaction-detail-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 450px;
+  max-width: 90vw;
+  background: white;
+  box-shadow: -4px 0 20px rgba(0, 0, 0, 0.15);
+  z-index: 1001;
+  display: flex;
+  flex-direction: column;
+  animation: slideIn 0.3s ease-out;
+}
+
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+/* Header */
+.transaction-detail-header {
+  padding: 20px;
+  border-bottom: 1px solid #e0e0e0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.transaction-detail-header h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: #333;
+}
+
+.transaction-detail-close {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: #999;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: all 0.2s;
+}
+
+.transaction-detail-close:hover {
+  background: #f5f5f5;
+  color: #666;
+}
+
+/* Body */
+.transaction-detail-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+/* Sections */
+.detail-section {
+  margin-bottom: 30px;
+}
+
+.detail-section h3 {
+  margin: 0 0 15px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Fields */
+.detail-field {
+  margin-bottom: 15px;
+}
+
+.detail-field label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #999;
+  margin-bottom: 5px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.detail-field span {
+  display: block;
+  font-size: 16px;
+  color: #333;
+}
+
+.detail-subtext {
+  font-size: 12px !important;
+  color: #999 !important;
+  margin-top: 5px;
+}
+
+/* Editable Fields */
+.detail-input,
+.detail-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #333;
+  font-family: inherit;
+  transition: all 0.2s;
+}
+
+.detail-input:focus,
+.detail-textarea:focus {
+  outline: none;
+  border-color: #3498db;
+  box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
+}
+
+.detail-textarea {
+  resize: vertical;
+  min-height: 80px;
+}
+
+/* Amount */
+.detail-amount {
+  font-size: 24px !important;
+  font-weight: 600;
+}
+
+.detail-amount.expense {
+  color: #e74c3c;
+}
+
+.detail-amount.income {
+  color: #27ae60;
+}
+
+/* Badges */
+.detail-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 12px !important;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.detail-badge.expense {
+  background: #ffebee;
+  color: #c62828;
+}
+
+.detail-badge.income {
+  background: #e8f5e9;
+  color: #2e7d32;
+}
+
+.detail-badge.info {
+  background: #e3f2fd;
+  color: #1565c0;
+}
+
+.detail-badge.warning {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+/* Code/Link */
+.detail-code,
+.detail-link {
+  font-family: monospace;
+  font-size: 13px !important;
+  color: #666 !important;
+}
+
+.detail-link {
+  color: #3498db !important;
+  cursor: pointer;
+}
+
+.detail-link:hover {
+  text-decoration: underline;
+}
+
+/* Footer */
+.transaction-detail-footer {
+  padding: 20px;
+  border-top: 1px solid #e0e0e0;
+}
+
+.transaction-detail-save {
+  width: 100%;
+  padding: 12px;
+  background: #3498db;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.transaction-detail-save:hover:not(:disabled) {
+  background: #2980b9;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.transaction-detail-save:disabled {
+  background: #ccc;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .transaction-detail-panel {
+    width: 100%;
+    max-width: 100%;
+  }
+}
+@
+
+---
+
+### Tests del TransactionDetail Component
+
+<<tests/TransactionDetail.test.jsx>>=
+import React from 'react';
+import { render, screen, fireEvent } from '@testing-library/react';
+import TransactionDetail from '../src/components/TransactionDetail.jsx';
+import { vi } from 'vitest';
+
+describe('TransactionDetail Component', () => {
+  <<transaction-detail-test-setup>>
+  <<transaction-detail-test-renders-details>>
+  <<transaction-detail-test-editable-fields>>
+  <<transaction-detail-test-save-button>>
+  <<transaction-detail-test-close-handlers>>
+  <<transaction-detail-test-null-transaction>>
+});
+@
+
+<<transaction-detail-test-setup>>=
+const mockTransaction = {
+  id: 'txn-123',
+  date: '2025-01-15',
+  merchant: 'Starbucks',
+  merchant_raw: 'STARBUCKS #12345',
+  amount: -5.50,
+  currency: 'USD',
+  type: 'expense',
+  account_id: 'acc-1',
+  account_name: 'Chase Checking',
+  notes: 'Morning coffee'
+};
+
+let onClose;
+let onSave;
+
+beforeEach(() => {
+  onClose = vi.fn();
+  onSave = vi.fn();
+});
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
+@
+
+<<transaction-detail-test-renders-details>>=
+test('renders transaction details', () => {
+  render(
+    <TransactionDetail
+      transaction={mockTransaction}
+      onClose={onClose}
+      onSave={onSave}
+    />
+  );
+
+  expect(screen.getByText(/Transaction Details/i)).toBeInTheDocument();
+  expect(screen.getByDisplayValue('Starbucks')).toBeInTheDocument();
+  expect(screen.getByText(/\$5.50/)).toBeInTheDocument();
+  expect(screen.getByText(/Chase Checking/i)).toBeInTheDocument();
+});
+@
+
+<<transaction-detail-test-editable-fields>>=
+test('allows editing merchant name and notes', () => {
+  render(
+    <TransactionDetail
+      transaction={mockTransaction}
+      onClose={onClose}
+      onSave={onSave}
+    />
+  );
+
+  const merchantInput = screen.getByDisplayValue('Starbucks');
+  const notesTextarea = screen.getByDisplayValue('Morning coffee');
+
+  fireEvent.change(merchantInput, { target: { value: 'Starbucks Coffee' } });
+  fireEvent.change(notesTextarea, { target: { value: 'Updated notes' } });
+
+  expect(merchantInput.value).toBe('Starbucks Coffee');
+  expect(notesTextarea.value).toBe('Updated notes');
+});
+@
+
+<<transaction-detail-test-save-button>>=
+test('save button enabled after changes', () => {
+  render(
+    <TransactionDetail
+      transaction={mockTransaction}
+      onClose={onClose}
+      onSave={onSave}
+    />
+  );
+
+  const saveButton = screen.getByText(/Save Changes/i);
+
+  // Initially disabled (no changes)
+  expect(saveButton).toBeDisabled();
+
+  // Make a change
+  const merchantInput = screen.getByDisplayValue('Starbucks');
+  fireEvent.change(merchantInput, { target: { value: 'New Name' } });
+
+  // Should be enabled
+  expect(saveButton).not.toBeDisabled();
+
+  // Click save
+  fireEvent.click(saveButton);
+
+  expect(onSave).toHaveBeenCalledWith({
+    id: 'txn-123',
+    merchant: 'New Name',
+    notes: 'Morning coffee'
+  });
+});
+@
+
+<<transaction-detail-test-close-handlers>>=
+test('closes panel on close button click', () => {
+  render(
+    <TransactionDetail
+      transaction={mockTransaction}
+      onClose={onClose}
+      onSave={onSave}
+    />
+  );
+
+  const closeButton = screen.getByText('✕');
+  fireEvent.click(closeButton);
+
+  expect(onClose).toHaveBeenCalled();
+});
+
+test('closes panel on overlay click', () => {
+  render(
+    <TransactionDetail
+      transaction={mockTransaction}
+      onClose={onClose}
+      onSave={onSave}
+    />
+  );
+
+  const overlay = document.querySelector('.transaction-detail-overlay');
+  fireEvent.click(overlay);
+
+  expect(onClose).toHaveBeenCalled();
+});
+@
+
+<<transaction-detail-test-null-transaction>>=
+test('renders nothing when transaction is null', () => {
+  const { container } = render(
+    <TransactionDetail
+      transaction={null}
+      onClose={onClose}
+      onSave={onSave}
+    />
+  );
+
+  expect(container.firstChild).toBeNull();
+});
+@
+
+---
+
+**Tests Cubiertos:**
+
+✅ **Renders details** - Muestra todos los campos de transacción
+✅ **Editable fields** - Permite editar merchant y notes
+✅ **Save button** - Enabled después de cambios, llama callback
+✅ **Close handlers** - Cierra con botón X y click en overlay
+✅ **Null transaction** - No renderiza nada si transaction es null
+
+**UI/UX Features:**
+
+- **Slide-in animation** - Panel entra desde la derecha
+- **Overlay** - Dark overlay detrás del panel
+- **Responsive** - Full width en mobile
+- **Keyboard shortcuts** - ESC cierra el panel
+- **Visual hierarchy** - Sections agrupadas lógicamente
+- **Editable feedback** - Focus states en inputs
+- **Save state** - Botón disabled hasta que hay cambios
+
+**Data Display**:
+
+- **Core fields** - Date, merchant, amount, type
+- **Multi-currency** - Original amount, exchange rate (si existe)
+- **Fees** - Foreign fees, fee relationships (si existe)
+- **Metadata** - ID, account, transfer info, reversals
+- **Notes** - Personal notes (editable)
+
+**Integration**:
+
+```jsx
+function App() {
+  const [selectedTransaction, setSelectedTransaction] = useState(null);
+
+  const handleTransactionClick = (txn) => {
+    setSelectedTransaction(txn);
+  };
+
+  const handleSave = async (updates) => {
+    await window.electronAPI.updateTransaction(updates);
+    // Refresh timeline
+    fetchTransactions();
+  };
+
+  return (
+    <>
+      <Timeline onTransactionClick={handleTransactionClick} />
+      <TransactionDetail
+        transaction={selectedTransaction}
+        onClose={() => setSelectedTransaction(null)}
+        onSave={handleSave}
+      />
+    </>
+  );
+}
+```
+
+**Status**: ✅ Task 10 completada con tests ejecutables
