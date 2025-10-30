@@ -17,6 +17,7 @@
 # Source code (GENERADO por npm run tangle - no commitear)
 /src/
 /tests/
+/migrations/
 /app/
 /lib/
 

@@ -103,11 +103,11 @@ function expandChunks(content, chunks, visited = new Set()) {
 }
 
 /**
- * Write chunk to file if it's a file path (starts with src/ or tests/)
+ * Write chunk to file if it's a file path (starts with src/, tests/, or migrations/)
  */
 function writeChunkToFile(chunkName, content, chunks) {
   // Only process chunks that look like file paths
-  if (!chunkName.startsWith('src/') && !chunkName.startsWith('tests/')) {
+  if (!chunkName.startsWith('src/') && !chunkName.startsWith('tests/') && !chunkName.startsWith('migrations/')) {
     return false;
   }
 
@@ -158,16 +158,17 @@ function tangle(litFilePath) {
  * Main entry point
  */
 function main() {
-  const litFile = path.join(ROOT_DIR, 'docs/literate-programming/phase-1-core.lit.md');
-
-  if (!fs.existsSync(litFile)) {
-    console.error(`${colors.red}✗ Error:${colors.reset} File not found: ${litFile}`);
-    console.error(`\nMake sure you have renamed phase-1-core.md to phase-1-core.lit.md`);
-    process.exit(1);
-  }
+  const litFiles = [
+    path.join(ROOT_DIR, 'docs/literate-programming/phase-1-core.lit.md'),
+    path.join(ROOT_DIR, 'docs/literate-programming/phase-2-organization.lit.md')
+  ];
 
   try {
-    tangle(litFile);
+    for (const litFile of litFiles) {
+      if (fs.existsSync(litFile)) {
+        tangle(litFile);
+      }
+    }
   } catch (error) {
     console.error(`${colors.red}✗ Error:${colors.reset} ${error.message}`);
     process.exit(1);
