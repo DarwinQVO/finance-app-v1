@@ -1558,3 +1558,345 @@ describe('CategoryManager Component', () => {
 
 ---
 
+## Task 18: Budgets Table 💰
+
+**Goal**: Create database schema for budgets with tracking capabilities.
+
+**Scope**:
+- Budgets table with name, amount, period, alert threshold
+- Budget-categories junction table (many-to-many)
+- Support for monthly, weekly, yearly periods
+- Active/inactive status tracking
+- Tests for schema and basic operations
+
+**LOC estimate**: ~100 LOC (migration ~40, tests ~60)
+
+---
+
+### Migration: Add Budgets Tables
+
+```sql
+<<migrations/004-add-budgets.sql>>=
+-- Budgets table
+CREATE TABLE IF NOT EXISTS budgets (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  amount REAL NOT NULL CHECK (amount > 0),
+  period TEXT NOT NULL CHECK (period IN ('monthly', 'weekly', 'yearly')),
+  alert_threshold REAL DEFAULT 0.8 CHECK (alert_threshold >= 0 AND alert_threshold <= 1),
+  start_date TEXT NOT NULL,
+  is_active BOOLEAN DEFAULT TRUE,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+-- Junction table: budgets <-> categories (many-to-many)
+CREATE TABLE IF NOT EXISTS budget_categories (
+  budget_id TEXT NOT NULL,
+  category_id TEXT NOT NULL,
+  FOREIGN KEY (budget_id) REFERENCES budgets(id) ON DELETE CASCADE,
+  FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE,
+  PRIMARY KEY (budget_id, category_id)
+);
+
+-- Indexes for performance
+CREATE INDEX IF NOT EXISTS idx_budgets_period ON budgets(period);
+CREATE INDEX IF NOT EXISTS idx_budgets_active ON budgets(is_active);
+CREATE INDEX IF NOT EXISTS idx_budget_categories_budget ON budget_categories(budget_id);
+CREATE INDEX IF NOT EXISTS idx_budget_categories_category ON budget_categories(category_id);
+@
+```
+
+---
+
+### Tests: Budgets Schema
+
+```javascript
+<<tests/budgets.test.js>>=
+import { describe, test, expect, beforeEach, afterEach } from 'vitest';
+import Database from 'better-sqlite3';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const ROOT_DIR = path.resolve(__dirname, '..');
+
+describe('Budgets Table Schema', () => {
+  let db;
+
+  beforeEach(() => {
+    // Create in-memory database
+    db = new Database(':memory:');
+
+    // Run migrations in order
+    const schema = fs.readFileSync(path.join(ROOT_DIR, 'src/db/schema.sql'), 'utf-8');
+    db.exec(schema);
+
+    const categoriesMigration = fs.readFileSync(
+      path.join(ROOT_DIR, 'migrations/002-add-categories.sql'),
+      'utf-8'
+    );
+    db.exec(categoriesMigration);
+
+    const budgetsMigration = fs.readFileSync(
+      path.join(ROOT_DIR, 'migrations/004-add-budgets.sql'),
+      'utf-8'
+    );
+    db.exec(budgetsMigration);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  test('budgets table exists with correct columns', () => {
+    const tableInfo = db.pragma('table_info(budgets)');
+    const columnNames = tableInfo.map(col => col.name);
+
+    expect(columnNames).toContain('id');
+    expect(columnNames).toContain('name');
+    expect(columnNames).toContain('amount');
+    expect(columnNames).toContain('period');
+    expect(columnNames).toContain('alert_threshold');
+    expect(columnNames).toContain('start_date');
+    expect(columnNames).toContain('is_active');
+    expect(columnNames).toContain('created_at');
+    expect(columnNames).toContain('updated_at');
+  });
+
+  test('budget_categories junction table exists', () => {
+    const tableInfo = db.pragma('table_info(budget_categories)');
+    const columnNames = tableInfo.map(col => col.name);
+
+    expect(columnNames).toContain('budget_id');
+    expect(columnNames).toContain('category_id');
+  });
+
+  test('can insert a budget with valid data', () => {
+    const now = new Date().toISOString();
+
+    db.prepare(`
+      INSERT INTO budgets (id, name, amount, period, alert_threshold, start_date, is_active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      'budget-1',
+      'Food Budget',
+      800.00,
+      'monthly',
+      0.8,
+      '2025-01-01',
+      1,
+      now,
+      now
+    );
+
+    const budget = db.prepare('SELECT * FROM budgets WHERE id = ?').get('budget-1');
+
+    expect(budget).toBeDefined();
+    expect(budget.name).toBe('Food Budget');
+    expect(budget.amount).toBe(800.00);
+    expect(budget.period).toBe('monthly');
+    expect(budget.alert_threshold).toBe(0.8);
+  });
+
+  test('enforces amount > 0 constraint', () => {
+    const now = new Date().toISOString();
+
+    expect(() => {
+      db.prepare(`
+        INSERT INTO budgets (id, name, amount, period, start_date, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run('budget-1', 'Invalid Budget', -100, 'monthly', '2025-01-01', now, now);
+    }).toThrow();
+  });
+
+  test('enforces valid period values', () => {
+    const now = new Date().toISOString();
+
+    expect(() => {
+      db.prepare(`
+        INSERT INTO budgets (id, name, amount, period, start_date, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run('budget-1', 'Invalid Period', 800, 'invalid', '2025-01-01', now, now);
+    }).toThrow();
+  });
+
+  test('enforces alert_threshold range (0-1)', () => {
+    const now = new Date().toISOString();
+
+    // Test > 1
+    expect(() => {
+      db.prepare(`
+        INSERT INTO budgets (id, name, amount, period, alert_threshold, start_date, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run('budget-1', 'Invalid Alert', 800, 'monthly', 1.5, '2025-01-01', now, now);
+    }).toThrow();
+
+    // Test < 0
+    expect(() => {
+      db.prepare(`
+        INSERT INTO budgets (id, name, amount, period, alert_threshold, start_date, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run('budget-2', 'Invalid Alert', 800, 'monthly', -0.1, '2025-01-01', now, now);
+    }).toThrow();
+  });
+
+  test('can link budget to categories', () => {
+    const now = new Date().toISOString();
+
+    // Create budget
+    db.prepare(`
+      INSERT INTO budgets (id, name, amount, period, start_date, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('budget-1', 'Food Budget', 800, 'monthly', '2025-01-01', now, now);
+
+    // Create category
+    db.prepare(`
+      INSERT INTO categories (id, name, created_at)
+      VALUES (?, ?, ?)
+    `).run('cat_food', 'Food & Dining', now);
+
+    // Link them
+    db.prepare(`
+      INSERT INTO budget_categories (budget_id, category_id)
+      VALUES (?, ?)
+    `).run('budget-1', 'cat_food');
+
+    const link = db.prepare(`
+      SELECT * FROM budget_categories
+      WHERE budget_id = ? AND category_id = ?
+    `).get('budget-1', 'cat_food');
+
+    expect(link).toBeDefined();
+    expect(link.budget_id).toBe('budget-1');
+    expect(link.category_id).toBe('cat_food');
+  });
+
+  test('CASCADE delete: deleting budget removes category links', () => {
+    const now = new Date().toISOString();
+
+    // Create budget
+    db.prepare(`
+      INSERT INTO budgets (id, name, amount, period, start_date, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('budget-1', 'Food Budget', 800, 'monthly', '2025-01-01', now, now);
+
+    // Create category
+    db.prepare(`
+      INSERT INTO categories (id, name, created_at)
+      VALUES (?, ?, ?)
+    `).run('cat_food', 'Food & Dining', now);
+
+    // Link them
+    db.prepare(`
+      INSERT INTO budget_categories (budget_id, category_id)
+      VALUES (?, ?)
+    `).run('budget-1', 'cat_food');
+
+    // Delete budget
+    db.prepare('DELETE FROM budgets WHERE id = ?').run('budget-1');
+
+    // Check that link was also deleted
+    const links = db.prepare('SELECT * FROM budget_categories WHERE budget_id = ?')
+      .all('budget-1');
+
+    expect(links.length).toBe(0);
+  });
+
+  test('supports multiple periods (monthly, weekly, yearly)', () => {
+    const now = new Date().toISOString();
+
+    db.prepare(`
+      INSERT INTO budgets (id, name, amount, period, start_date, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('budget-1', 'Monthly Budget', 800, 'monthly', '2025-01-01', now, now);
+
+    db.prepare(`
+      INSERT INTO budgets (id, name, amount, period, start_date, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('budget-2', 'Weekly Budget', 200, 'weekly', '2025-01-01', now, now);
+
+    db.prepare(`
+      INSERT INTO budgets (id, name, amount, period, start_date, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('budget-3', 'Yearly Budget', 10000, 'yearly', '2025-01-01', now, now);
+
+    const budgets = db.prepare('SELECT period FROM budgets ORDER BY id').all();
+
+    expect(budgets[0].period).toBe('monthly');
+    expect(budgets[1].period).toBe('weekly');
+    expect(budgets[2].period).toBe('yearly');
+  });
+
+  test('budget can be linked to multiple categories', () => {
+    const now = new Date().toISOString();
+
+    // Create budget
+    db.prepare(`
+      INSERT INTO budgets (id, name, amount, period, start_date, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run('budget-1', 'Multi Budget', 1500, 'monthly', '2025-01-01', now, now);
+
+    // Create categories
+    db.prepare(`
+      INSERT INTO categories (id, name, created_at)
+      VALUES (?, ?, ?)
+    `).run('cat_food', 'Food & Dining', now);
+
+    db.prepare(`
+      INSERT INTO categories (id, name, created_at)
+      VALUES (?, ?, ?)
+    `).run('cat_transport', 'Transportation', now);
+
+    // Link budget to both categories
+    db.prepare(`
+      INSERT INTO budget_categories (budget_id, category_id)
+      VALUES (?, ?)
+    `).run('budget-1', 'cat_food');
+
+    db.prepare(`
+      INSERT INTO budget_categories (budget_id, category_id)
+      VALUES (?, ?)
+    `).run('budget-1', 'cat_transport');
+
+    const links = db.prepare('SELECT * FROM budget_categories WHERE budget_id = ?')
+      .all('budget-1');
+
+    expect(links.length).toBe(2);
+  });
+});
+@
+```
+
+---
+
+### ✅ Test Coverage: Budgets
+
+**Tests cubiertos**:
+1. ✅ Budgets table exists with correct columns
+2. ✅ Budget_categories junction table exists
+3. ✅ Can insert a budget with valid data
+4. ✅ Enforces amount > 0 constraint
+5. ✅ Enforces valid period values (monthly/weekly/yearly)
+6. ✅ Enforces alert_threshold range (0-1)
+7. ✅ Can link budget to categories
+8. ✅ CASCADE delete removes category links
+9. ✅ Supports multiple periods
+10. ✅ Budget can be linked to multiple categories
+
+---
+
+### 📊 Status: Task 18 Complete
+
+**Output**:
+- ✅ `migrations/004-add-budgets.sql` - Budgets schema with constraints
+- ✅ `tests/budgets.test.js` - 10 tests
+
+**Total**: ~150 LOC (slightly over estimate due to comprehensive tests)
+
+**Next**: Task 19 - Budget Tracking Engine
+
+---
+
