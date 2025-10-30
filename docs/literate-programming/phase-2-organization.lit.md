@@ -2468,3 +2468,931 @@ describe('Budget Tracking Engine', () => {
 
 ---
 
+## Task 20: Budgets UI Component 💰
+
+**Goal**: Create UI component for managing budgets with real-time status display.
+
+**Scope**:
+- View all budgets with current spending status
+- Create new budget (name, amount, period, categories, alert threshold)
+- Edit existing budgets
+- Delete budgets
+- Visual progress bars showing budget usage
+- Alert indicators (warning at threshold, danger when over)
+
+**LOC estimate**: ~300 LOC (component ~150, styles ~80, tests ~70)
+
+---
+
+### Component: BudgetManager.jsx
+
+React component for managing budgets with real-time status tracking.
+
+```javascript
+<<src/components/BudgetManager.jsx>>=
+import React, { useState, useEffect } from 'react';
+import './BudgetManager.css';
+
+export default function BudgetManager() {
+  const [budgets, setBudgets] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showForm, setShowForm] = useState(false);
+  const [editingBudget, setEditingBudget] = useState(null);
+  const [formData, setFormData] = useState({
+    name: '',
+    amount: '',
+    period: 'monthly',
+    alertThreshold: 0.8,
+    selectedCategories: []
+  });
+
+  useEffect(() => {
+    loadData();
+  }, []);
+
+  async function loadData() {
+    try {
+      const [budgetsData, categoriesData] = await Promise.all([
+        window.electronAPI.getBudgetsWithStatus(),
+        window.electronAPI.getCategories()
+      ]);
+      setBudgets(budgetsData);
+      setCategories(categoriesData.filter(c => c.is_active));
+    } catch (error) {
+      console.error('Failed to load data:', error);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function handleCreateNew() {
+    setEditingBudget(null);
+    setFormData({
+      name: '',
+      amount: '',
+      period: 'monthly',
+      alertThreshold: 0.8,
+      selectedCategories: []
+    });
+    setShowForm(true);
+  }
+
+  function handleEdit(budget) {
+    setEditingBudget(budget);
+    setFormData({
+      name: budget.name,
+      amount: budget.limit.toString(),
+      period: budget.period || 'monthly',
+      alertThreshold: budget.alert_threshold || 0.8,
+      selectedCategories: budget.categories || []
+    });
+    setShowForm(true);
+  }
+
+  async function handleDelete(budget) {
+    const confirmed = window.confirm(
+      `Are you sure you want to delete budget "${budget.name}"?\n\n` +
+      `This action cannot be undone.`
+    );
+
+    if (!confirmed) return;
+
+    try {
+      await window.electronAPI.deleteBudget(budget.budgetId);
+      loadData();
+    } catch (error) {
+      alert('Failed to delete budget: ' + error.message);
+    }
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+
+    if (!formData.name.trim()) {
+      alert('Name is required');
+      return;
+    }
+
+    if (!formData.amount || parseFloat(formData.amount) <= 0) {
+      alert('Amount must be greater than 0');
+      return;
+    }
+
+    if (formData.selectedCategories.length === 0) {
+      alert('Please select at least one category');
+      return;
+    }
+
+    const budgetData = {
+      name: formData.name.trim(),
+      amount: parseFloat(formData.amount),
+      period: formData.period,
+      alertThreshold: formData.alertThreshold,
+      categories: formData.selectedCategories
+    };
+
+    try {
+      if (editingBudget) {
+        await window.electronAPI.updateBudget(editingBudget.budgetId, budgetData);
+      } else {
+        await window.electronAPI.createBudget(budgetData);
+      }
+      setShowForm(false);
+      loadData();
+    } catch (error) {
+      alert('Failed to save budget: ' + error.message);
+    }
+  }
+
+  function handleCancel() {
+    setShowForm(false);
+    setEditingBudget(null);
+  }
+
+  function toggleCategory(categoryId) {
+    setFormData(prev => ({
+      ...prev,
+      selectedCategories: prev.selectedCategories.includes(categoryId)
+        ? prev.selectedCategories.filter(id => id !== categoryId)
+        : [...prev.selectedCategories, categoryId]
+    }));
+  }
+
+  function formatCurrency(amount) {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD'
+    }).format(amount);
+  }
+
+  function getStatusClass(budget) {
+    if (budget.isOverBudget) return 'over-budget';
+    if (budget.shouldAlert) return 'warning';
+    return 'ok';
+  }
+
+  if (loading) {
+    return <div className="budget-manager loading">Loading budgets...</div>;
+  }
+
+  return (
+    <div className="budget-manager">
+      <div className="budget-manager-header">
+        <h2>Budgets</h2>
+        <button onClick={handleCreateNew} className="btn-primary">
+          + New Budget
+        </button>
+      </div>
+
+      {showForm && (
+        <div className="budget-form-overlay">
+          <div className="budget-form">
+            <h3>{editingBudget ? 'Edit Budget' : 'Create Budget'}</h3>
+            <form onSubmit={handleSubmit}>
+              <div className="form-group">
+                <label htmlFor="name">Name *</label>
+                <input
+                  id="name"
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  placeholder="e.g., Food Budget"
+                  required
+                />
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label htmlFor="amount">Amount *</label>
+                  <input
+                    id="amount"
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    value={formData.amount}
+                    onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                    placeholder="800.00"
+                    required
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="period">Period *</label>
+                  <select
+                    id="period"
+                    value={formData.period}
+                    onChange={(e) => setFormData({ ...formData, period: e.target.value })}
+                  >
+                    <option value="weekly">Weekly</option>
+                    <option value="monthly">Monthly</option>
+                    <option value="yearly">Yearly</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="alertThreshold">
+                  Alert at {Math.round(formData.alertThreshold * 100)}% usage
+                </label>
+                <input
+                  id="alertThreshold"
+                  type="range"
+                  min="0.5"
+                  max="1"
+                  step="0.05"
+                  value={formData.alertThreshold}
+                  onChange={(e) => setFormData({ ...formData, alertThreshold: parseFloat(e.target.value) })}
+                />
+              </div>
+
+              <div className="form-group">
+                <label>Categories *</label>
+                <div className="category-checkboxes">
+                  {categories.map((cat) => (
+                    <label key={cat.id} className="category-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={formData.selectedCategories.includes(cat.id)}
+                        onChange={() => toggleCategory(cat.id)}
+                      />
+                      <span className="category-icon" style={{ color: cat.color }}>
+                        {cat.icon}
+                      </span>
+                      <span>{cat.name}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              <div className="form-actions">
+                <button type="button" onClick={handleCancel} className="btn-secondary">
+                  Cancel
+                </button>
+                <button type="submit" className="btn-primary">
+                  {editingBudget ? 'Save' : 'Create'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {budgets.length === 0 ? (
+        <div className="empty-state">
+          <p>No budgets created yet.</p>
+          <p>Budgets help you control spending by setting limits for specific categories.</p>
+          <button onClick={handleCreateNew} className="btn-primary">
+            Create Your First Budget
+          </button>
+        </div>
+      ) : (
+        <div className="budget-list">
+          {budgets.map((budget) => (
+            <div key={budget.budgetId} className={`budget-card ${getStatusClass(budget)}`}>
+              <div className="budget-header">
+                <h3>{budget.name}</h3>
+                <span className="budget-period">{formatCurrency(budget.limit)}/{budget.period}</span>
+              </div>
+
+              <div className="budget-progress">
+                <div className="progress-bar">
+                  <div
+                    className="progress-fill"
+                    style={{ width: `${Math.min(budget.percentage, 100)}%` }}
+                  />
+                </div>
+                <div className="progress-text">
+                  {formatCurrency(budget.spent)} / {formatCurrency(budget.limit)}
+                </div>
+              </div>
+
+              <div className="budget-status">
+                <span className="percentage">{Math.round(budget.percentage)}% used</span>
+                <span className="remaining">
+                  {budget.isOverBudget
+                    ? `${formatCurrency(Math.abs(budget.remaining))} over budget`
+                    : `${formatCurrency(budget.remaining)} remaining`}
+                </span>
+              </div>
+
+              {budget.categories && budget.categories.length > 0 && (
+                <div className="budget-categories">
+                  Categories: {budget.categories.length} selected
+                </div>
+              )}
+
+              <div className="budget-actions">
+                <button onClick={() => handleEdit(budget)} className="btn-small">
+                  Edit
+                </button>
+                <button onClick={() => handleDelete(budget)} className="btn-small btn-danger">
+                  Delete
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+@
+```
+
+---
+
+### Styles: BudgetManager.css
+
+```css
+<<src/components/BudgetManager.css>>=
+.budget-manager {
+  padding: 20px;
+  max-width: 1000px;
+  margin: 0 auto;
+}
+
+.budget-manager.loading {
+  text-align: center;
+  padding: 40px;
+  color: #666;
+}
+
+.budget-manager-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 30px;
+}
+
+.budget-manager-header h2 {
+  margin: 0;
+  font-size: 24px;
+  color: #333;
+}
+
+.budget-form-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.budget-form {
+  background: white;
+  padding: 30px;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 600px;
+  max-height: 90vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.budget-form h3 {
+  margin: 0 0 20px 0;
+  font-size: 20px;
+  color: #333;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 15px;
+}
+
+.form-group {
+  margin-bottom: 20px;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
+  color: #555;
+}
+
+.form-group input,
+.form-group select {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.form-group input[type="range"] {
+  padding: 0;
+}
+
+.category-checkboxes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px;
+  max-height: 200px;
+  overflow-y: auto;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+}
+
+.category-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  padding: 8px;
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+.category-checkbox:hover {
+  background: #f5f5f5;
+}
+
+.category-checkbox input[type="checkbox"] {
+  width: auto;
+}
+
+.category-icon {
+  font-size: 18px;
+}
+
+.form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 30px;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 60px 20px;
+  color: #666;
+}
+
+.empty-state p {
+  margin: 10px 0;
+}
+
+.budget-list {
+  display: grid;
+  gap: 20px;
+}
+
+.budget-card {
+  background: white;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 20px;
+  transition: all 0.3s;
+}
+
+.budget-card.ok {
+  border-color: #4CAF50;
+}
+
+.budget-card.warning {
+  border-color: #FF9800;
+  background: #FFF3E0;
+}
+
+.budget-card.over-budget {
+  border-color: #f44336;
+  background: #FFEBEE;
+}
+
+.budget-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 15px;
+}
+
+.budget-header h3 {
+  margin: 0;
+  font-size: 18px;
+  color: #333;
+}
+
+.budget-period {
+  font-size: 14px;
+  color: #666;
+  font-weight: 500;
+}
+
+.budget-progress {
+  margin-bottom: 10px;
+}
+
+.progress-bar {
+  height: 24px;
+  background: #f0f0f0;
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4CAF50, #45a049);
+  transition: width 0.3s ease;
+}
+
+.budget-card.warning .progress-fill {
+  background: linear-gradient(90deg, #FF9800, #F57C00);
+}
+
+.budget-card.over-budget .progress-fill {
+  background: linear-gradient(90deg, #f44336, #d32f2f);
+}
+
+.progress-text {
+  font-size: 14px;
+  color: #666;
+  text-align: center;
+}
+
+.budget-status {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid #e0e0e0;
+  border-bottom: 1px solid #e0e0e0;
+  margin-bottom: 10px;
+}
+
+.percentage {
+  font-weight: 600;
+  font-size: 16px;
+  color: #333;
+}
+
+.remaining {
+  font-size: 14px;
+  color: #666;
+}
+
+.budget-categories {
+  font-size: 12px;
+  color: #999;
+  margin-bottom: 15px;
+}
+
+.budget-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.btn-primary {
+  background: #4CAF50;
+  color: white;
+  border: none;
+  padding: 10px 20px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-primary:hover {
+  background: #45a049;
+}
+
+.btn-secondary {
+  background: #f0f0f0;
+  color: #333;
+  border: 1px solid #ddd;
+  padding: 10px 20px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-secondary:hover {
+  background: #e0e0e0;
+}
+
+.btn-small {
+  background: #f0f0f0;
+  color: #333;
+  border: 1px solid #ddd;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-small:hover {
+  background: #e0e0e0;
+}
+
+.btn-danger {
+  color: #d32f2f;
+  border-color: #d32f2f;
+}
+
+.btn-danger:hover {
+  background: #ffebee;
+}
+@
+```
+
+---
+
+### Tests: BudgetManager.test.jsx
+
+```javascript
+<<tests/BudgetManager.test.jsx>>=
+import React from 'react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import BudgetManager from '../src/components/BudgetManager.jsx';
+import { vi } from 'vitest';
+
+describe('BudgetManager Component', () => {
+  const mockBudgets = [
+    {
+      budgetId: 'budget-1',
+      name: 'Food Budget',
+      limit: 800,
+      spent: 547.89,
+      remaining: 252.11,
+      percentage: 68.49,
+      period: 'monthly',
+      isOverBudget: false,
+      shouldAlert: false,
+      categories: ['cat_food']
+    },
+    {
+      budgetId: 'budget-2',
+      name: 'Entertainment',
+      limit: 200,
+      spent: 175,
+      remaining: 25,
+      percentage: 87.5,
+      period: 'monthly',
+      isOverBudget: false,
+      shouldAlert: true,
+      categories: ['cat_entertainment']
+    }
+  ];
+
+  const mockCategories = [
+    { id: 'cat_food', name: 'Food & Dining', icon: '🍔', color: '#FF6B6B', is_active: true },
+    { id: 'cat_entertainment', name: 'Entertainment', icon: '🎬', color: '#F38181', is_active: true }
+  ];
+
+  beforeEach(() => {
+    window.electronAPI = {
+      getBudgetsWithStatus: vi.fn(),
+      getCategories: vi.fn(),
+      createBudget: vi.fn(),
+      updateBudget: vi.fn(),
+      deleteBudget: vi.fn()
+    };
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  test('renders loading state initially', () => {
+    window.electronAPI.getBudgetsWithStatus.mockImplementation(() => new Promise(() => {}));
+    window.electronAPI.getCategories.mockImplementation(() => new Promise(() => {}));
+
+    render(<BudgetManager />);
+    expect(screen.getByText(/Loading budgets/i)).toBeInTheDocument();
+  });
+
+  test('renders budgets after loading', async () => {
+    window.electronAPI.getBudgetsWithStatus.mockResolvedValue(mockBudgets);
+    window.electronAPI.getCategories.mockResolvedValue(mockCategories);
+
+    render(<BudgetManager />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Food Budget')).toBeInTheDocument();
+      expect(screen.getByText('Entertainment')).toBeInTheDocument();
+    });
+  });
+
+  test('shows empty state when no budgets', async () => {
+    window.electronAPI.getBudgetsWithStatus.mockResolvedValue([]);
+    window.electronAPI.getCategories.mockResolvedValue(mockCategories);
+
+    render(<BudgetManager />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/No budgets created yet/i)).toBeInTheDocument();
+      expect(screen.getByText(/Create Your First Budget/i)).toBeInTheDocument();
+    });
+  });
+
+  test('opens create form when clicking New Budget', async () => {
+    window.electronAPI.getBudgetsWithStatus.mockResolvedValue(mockBudgets);
+    window.electronAPI.getCategories.mockResolvedValue(mockCategories);
+
+    render(<BudgetManager />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Food Budget')).toBeInTheDocument();
+    });
+
+    const newButton = screen.getByText('+ New Budget');
+    fireEvent.click(newButton);
+
+    expect(screen.getByText('Create Budget')).toBeInTheDocument();
+    expect(screen.getByLabelText(/Name/i)).toBeInTheDocument();
+  });
+
+  test('creates new budget successfully', async () => {
+    window.electronAPI.getBudgetsWithStatus.mockResolvedValue(mockBudgets);
+    window.electronAPI.getCategories.mockResolvedValue(mockCategories);
+    window.electronAPI.createBudget.mockResolvedValue({ success: true });
+
+    render(<BudgetManager />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Food Budget')).toBeInTheDocument();
+    });
+
+    // Open form
+    fireEvent.click(screen.getByText('+ New Budget'));
+
+    // Fill form
+    const nameInput = screen.getByLabelText(/Name/i);
+    fireEvent.change(nameInput, { target: { value: 'Transport Budget' } });
+
+    const amountInput = screen.getByLabelText(/Amount/i);
+    fireEvent.change(amountInput, { target: { value: '500' } });
+
+    // Select category
+    const categoryCheckboxes = screen.getAllByRole('checkbox');
+    fireEvent.click(categoryCheckboxes[0]);
+
+    // Submit
+    const createButton = screen.getByText('Create');
+    fireEvent.click(createButton);
+
+    await waitFor(() => {
+      expect(window.electronAPI.createBudget).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'Transport Budget',
+          amount: 500,
+          period: 'monthly',
+          categories: expect.any(Array)
+        })
+      );
+    });
+  });
+
+  test('validates required fields', async () => {
+    window.electronAPI.getBudgetsWithStatus.mockResolvedValue(mockBudgets);
+    window.electronAPI.getCategories.mockResolvedValue(mockCategories);
+    window.alert = vi.fn();
+
+    render(<BudgetManager />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Food Budget')).toBeInTheDocument();
+    });
+
+    // Open form
+    fireEvent.click(screen.getByText('+ New Budget'));
+
+    // Try to submit without filling
+    const createButton = screen.getByText('Create');
+    fireEvent.click(createButton);
+
+    // Should not call API (form validation prevents it)
+    expect(window.electronAPI.createBudget).not.toHaveBeenCalled();
+  });
+
+  test('displays budget status with correct styling', async () => {
+    window.electronAPI.getBudgetsWithStatus.mockResolvedValue(mockBudgets);
+    window.electronAPI.getCategories.mockResolvedValue(mockCategories);
+
+    render(<BudgetManager />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Food Budget')).toBeInTheDocument();
+    });
+
+    // Check for percentage display
+    expect(screen.getByText(/68% used/i)).toBeInTheDocument();
+    expect(screen.getByText(/88% used/i)).toBeInTheDocument();
+  });
+
+  test('allows editing existing budget', async () => {
+    window.electronAPI.getBudgetsWithStatus.mockResolvedValue(mockBudgets);
+    window.electronAPI.getCategories.mockResolvedValue(mockCategories);
+
+    render(<BudgetManager />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Food Budget')).toBeInTheDocument();
+    });
+
+    // Find first budget's edit button
+    const editButtons = screen.getAllByText('Edit');
+    fireEvent.click(editButtons[0]);
+
+    await waitFor(() => {
+      expect(screen.getByText('Edit Budget')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('Food Budget')).toBeInTheDocument();
+    });
+  });
+
+  test('deletes budget after confirmation', async () => {
+    window.electronAPI.getBudgetsWithStatus.mockResolvedValue(mockBudgets);
+    window.electronAPI.getCategories.mockResolvedValue(mockCategories);
+    window.electronAPI.deleteBudget.mockResolvedValue({ success: true });
+    window.confirm = vi.fn(() => true);
+
+    render(<BudgetManager />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Food Budget')).toBeInTheDocument();
+    });
+
+    // Click delete on first budget
+    const deleteButtons = screen.getAllByText('Delete');
+    fireEvent.click(deleteButtons[0]);
+
+    await waitFor(() => {
+      expect(window.confirm).toHaveBeenCalled();
+      expect(window.electronAPI.deleteBudget).toHaveBeenCalledWith('budget-1');
+    });
+  });
+
+  test('shows over-budget status correctly', async () => {
+    const overBudget = [{
+      budgetId: 'budget-over',
+      name: 'Over Budget',
+      limit: 800,
+      spent: 900,
+      remaining: -100,
+      percentage: 112.5,
+      period: 'monthly',
+      isOverBudget: true,
+      shouldAlert: true,
+      categories: ['cat_food']
+    }];
+
+    window.electronAPI.getBudgetsWithStatus.mockResolvedValue(overBudget);
+    window.electronAPI.getCategories.mockResolvedValue(mockCategories);
+
+    render(<BudgetManager />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Over Budget')).toBeInTheDocument();
+      expect(screen.getByText('$100.00 over budget')).toBeInTheDocument();
+    });
+  });
+});
+@
+```
+
+---
+
+### ✅ Test Coverage: BudgetManager
+
+**Tests cubiertos**:
+1. ✅ Renders loading state initially
+2. ✅ Renders budgets after loading
+3. ✅ Shows empty state when no budgets
+4. ✅ Opens create form when clicking New Budget
+5. ✅ Creates new budget successfully
+6. ✅ Validates required fields
+7. ✅ Displays budget status with correct styling
+8. ✅ Allows editing existing budget
+9. ✅ Deletes budget after confirmation
+10. ✅ Shows over-budget status correctly
+
+---
+
+### 📊 Status: Task 20 Complete
+
+**Output**:
+- ✅ `src/components/BudgetManager.jsx` - Budget management UI
+- ✅ `src/components/BudgetManager.css` - Component styles
+- ✅ `tests/BudgetManager.test.jsx` - 10 tests
+
+**Total**: ~350 LOC (over estimate due to comprehensive UI features)
+
+**Next**: Task 21 - Recurring Detection Engine
+
+---
+
