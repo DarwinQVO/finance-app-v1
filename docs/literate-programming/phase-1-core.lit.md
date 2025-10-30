@@ -94,6 +94,12 @@ CREATE TABLE transactions (
 <<rfc-registry-table>>
 <<rfc-registry-seed-data>>
 <<rfc-registry-indexes>>
+
+-- ============================================================
+-- UPLOADED FILES TABLE
+-- ============================================================
+<<uploaded-files-table>>
+<<uploaded-files-indexes>>
 @
 
 <<transactions-amounts>>=
@@ -308,6 +314,19 @@ INSERT INTO rfc_registry (rfc, merchant_name, merchant_type, verified, times_see
 
 <<rfc-registry-indexes>>=
 CREATE INDEX idx_rfc_registry_merchant ON rfc_registry(merchant_name);
+@
+
+<<uploaded-files-table>>=
+CREATE TABLE uploaded_files (
+  file_hash TEXT PRIMARY KEY,              -- SHA256 del archivo
+  file_path TEXT NOT NULL,                 -- Path del archivo en disco
+  uploaded_at TEXT NOT NULL,               -- Timestamp del upload
+  transaction_count INTEGER NOT NULL       -- Cuántas transactions se importaron
+);
+@
+
+<<uploaded-files-indexes>>=
+CREATE INDEX idx_uploaded_files_date ON uploaded_files(uploaded_at DESC);
 @
 
 ---
@@ -751,7 +770,7 @@ let dbPath;
 
 beforeEach(() => {
   // Use temp file so parser and tests share same DB
-  dbPath = `test-${Date.now()}.db`;
+  dbPath = `test-${Date.now()}-${Math.random().toString(36).substring(7)}.db`;
   db = new Database(dbPath);
   db.exec(schemaSQL);
   parser = new ParserEngine(dbPath);
@@ -1571,3 +1590,437 @@ test('includes Mexico-specific merchants', () => {
 **Total**: 29 rules covering most common merchants
 
 **Status**: ✅ Task 5 completada con tests ejecutables
+
+---
+
+## 6. Upload Flow Backend
+
+El upload flow es el **gateway** del sistema. Toma un archivo (PDF o CSV) del usuario y lo convierte en transactions normalizadas en la DB. Este es el punto donde todo converge: parsing, normalization, deduplication, y storage.
+
+### Flujo completo
+
+```
+User → Upload file → UploadHandler
+  ↓
+Calculate SHA256 hash
+  ↓
+Check duplicate (hash exists in uploaded_files?)
+  ↓ No → Continue | Yes → Return "Already uploaded"
+  ↓
+Detect bank (auto-detect using parser_configs detection_rules)
+  ↓
+Parse file → Raw transactions[]
+  ↓
+Normalize merchants → Normalized transactions[]
+  ↓
+Generate transaction IDs & hashes
+  ↓
+Insert into DB (transactions + uploaded_files)
+  ↓
+Return { imported: N, skipped: M, errors: [] }
+```
+
+### Edge Cases Manejados
+
+- **Edge Case #1**: Formatos diferentes → Auto-detect usando detection_rules
+- **Edge Case #12**: Bank IDs cambian → Usamos nuestro hash propio
+- **Deduplication**: Por hash de archivo (no re-importar el mismo PDF 2 veces)
+
+---
+
+<<src/lib/upload-handler.js>>=
+import Database from 'better-sqlite3';
+import crypto from 'crypto';
+import ParserEngine from './parser-engine.js';
+import NormalizationEngine from './normalization.js';
+import { readFileSync } from 'fs';
+
+/**
+ * UploadHandler - Coordina el flujo completo de upload
+ */
+class UploadHandler {
+  constructor(dbPath) {
+    this.db = new Database(dbPath);
+    this.parser = new ParserEngine(dbPath);
+    this.normalizer = new NormalizationEngine(dbPath);
+  }
+
+  <<upload-handler-upload>>
+  <<upload-handler-calculate-hash>>
+  <<upload-handler-check-duplicate>>
+  <<upload-handler-detect-bank>>
+  <<upload-handler-parse-file>>
+  <<upload-handler-normalize-transactions>>
+  <<upload-handler-insert-transactions>>
+
+  close() {
+    this.parser.close();
+    this.normalizer.close();
+    this.db.close();
+  }
+}
+
+export default UploadHandler;
+@
+
+<<upload-handler-upload>>=
+/**
+ * Upload file y procesar
+ *
+ * @param {string} filePath - Path al archivo
+ * @param {string} accountId - ID de la cuenta
+ * @returns {Object} { imported, skipped, errors, fileHash }
+ */
+async upload(filePath, accountId) {
+  const errors = [];
+
+  try {
+    // 1. Calculate hash
+    const fileHash = this.calculateHash(filePath);
+
+    // 2. Check duplicate
+    if (this.checkDuplicate(fileHash)) {
+      return {
+        imported: 0,
+        skipped: 0,
+        errors: ['File already uploaded'],
+        fileHash,
+        duplicate: true
+      };
+    }
+
+    // 3. Detect bank
+    const fileContent = readFileSync(filePath, 'utf-8');
+    const bankConfig = this.detectBank(fileContent);
+
+    if (!bankConfig) {
+      return {
+        imported: 0,
+        skipped: 0,
+        errors: ['Unable to detect bank format'],
+        fileHash,
+        duplicate: false
+      };
+    }
+
+    // 4. Parse file (mock for now - full implementation in later phases)
+    const rawTransactions = this.parseFile(fileContent, bankConfig);
+
+    // 5. Normalize merchants
+    const normalizedTransactions = this.normalizeTransactions(rawTransactions, accountId);
+
+    // 6. Insert transactions
+    const { imported, skipped } = this.insertTransactions(normalizedTransactions, fileHash, filePath);
+
+    return { imported, skipped, errors, fileHash, duplicate: false };
+
+  } catch (error) {
+    errors.push(error.message);
+    return { imported: 0, skipped: 0, errors, fileHash: null };
+  }
+}
+@
+
+<<upload-handler-calculate-hash>>=
+/**
+ * Calculate SHA256 hash de archivo
+ *
+ * Edge Case #12: Bank transaction IDs cambian, usamos hash del archivo
+ */
+calculateHash(filePath) {
+  const content = readFileSync(filePath);
+  return crypto.createHash('sha256').update(content).digest('hex');
+}
+@
+
+<<upload-handler-check-duplicate>>=
+/**
+ * Check si archivo ya fue uploaded
+ */
+checkDuplicate(fileHash) {
+  const stmt = this.db.prepare(`
+    SELECT COUNT(*) as count FROM uploaded_files
+    WHERE file_hash = ?
+  `);
+
+  const result = stmt.get(fileHash);
+  return result.count > 0;
+}
+@
+
+<<upload-handler-detect-bank>>=
+/**
+ * Auto-detect bank usando detection_rules de parser_configs
+ */
+detectBank(fileContent) {
+  const configs = this.db.prepare(`
+    SELECT * FROM parser_configs WHERE is_active = TRUE
+  `).all();
+
+  for (const config of configs) {
+    const detectionRules = JSON.parse(config.detection_rules);
+
+    // Check text_contains rules
+    if (detectionRules.text_contains) {
+      const allMatch = detectionRules.text_contains.every(text =>
+        fileContent.includes(text)
+      );
+
+      if (allMatch) {
+        return config;
+      }
+    }
+  }
+
+  return null;
+}
+@
+
+<<upload-handler-parse-file>>=
+/**
+ * Parse file usando config
+ *
+ * NOTE: Esta es una implementación mock para Phase 1
+ * La implementación completa con PDF parsing viene en Phase 2
+ */
+parseFile(fileContent, bankConfig) {
+  // Mock: retorna array vacío por ahora
+  // En Phase 2 esto llamará a pdf-parse o csv-parse según el tipo
+  return [];
+}
+@
+
+<<upload-handler-normalize-transactions>>=
+/**
+ * Normalizar merchants en todas las transactions
+ */
+normalizeTransactions(rawTransactions, accountId) {
+  return rawTransactions.map(txn => ({
+    ...txn,
+    account_id: accountId,
+    merchant: this.normalizer.normalize(txn.merchant_raw),
+    // Generate transaction ID
+    id: crypto.randomUUID(),
+    // Generate dedup hash
+    source_hash: this.parser.generateHash(
+      accountId,
+      txn.date,
+      txn.amount,
+      txn.merchant_raw
+    )
+  }));
+}
+@
+
+<<upload-handler-insert-transactions>>=
+/**
+ * Insert transactions en DB con deduplication
+ */
+insertTransactions(transactions, fileHash, filePath) {
+  let imported = 0;
+  let skipped = 0;
+
+  // Begin transaction
+  const insertTxn = this.db.transaction(() => {
+    // Insert uploaded_files record
+    this.db.prepare(`
+      INSERT INTO uploaded_files (file_hash, file_path, uploaded_at, transaction_count)
+      VALUES (?, ?, datetime('now'), ?)
+    `).run(fileHash, filePath, transactions.length);
+
+    // Insert transactions con dedup
+    const insertStmt = this.db.prepare(`
+      INSERT OR IGNORE INTO transactions (
+        id, account_id, date, merchant, merchant_raw,
+        amount, currency, type, source_hash,
+        created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+    `);
+
+    for (const txn of transactions) {
+      const result = insertStmt.run(
+        txn.id,
+        txn.account_id,
+        txn.date,
+        txn.merchant,
+        txn.merchant_raw,
+        txn.amount,
+        txn.currency || 'USD',
+        txn.type || 'expense',
+        txn.source_hash
+      );
+
+      if (result.changes > 0) {
+        imported++;
+      } else {
+        skipped++;  // Duplicate source_hash
+      }
+    }
+  });
+
+  insertTxn();
+
+  return { imported, skipped };
+}
+@
+
+---
+
+### Tests del Upload Handler
+
+<<tests/upload-handler.test.js>>=
+import UploadHandler from '../src/lib/upload-handler.js';
+import Database from 'better-sqlite3';
+import { readFileSync, writeFileSync, unlinkSync } from 'fs';
+import crypto from 'crypto';
+
+const schemaSQL = readFileSync('src/db/schema.sql', 'utf-8');
+const parserConfigsSQL = readFileSync('src/db/seed-parser-configs.sql', 'utf-8');
+const normRulesSQL = readFileSync('src/db/seed-normalization-rules.sql', 'utf-8');
+
+describe('UploadHandler', () => {
+  <<upload-test-setup>>
+  <<upload-test-calculate-hash>>
+  <<upload-test-check-duplicate>>
+  <<upload-test-detect-bank>>
+  <<upload-test-upload-flow>>
+  <<upload-test-duplicate-prevention>>
+});
+@
+
+<<upload-test-setup>>=
+let db;
+let handler;
+let dbPath;
+let testFilePath;
+
+beforeEach(() => {
+  dbPath = `test-${Date.now()}-${Math.random().toString(36).substring(7)}.db`;
+  db = new Database(dbPath);
+  db.exec(schemaSQL);
+  db.exec(parserConfigsSQL);
+  db.exec(normRulesSQL);
+
+  // Create test account
+  db.prepare(`
+    INSERT INTO accounts (id, name, type, institution, currency, is_active, created_at, updated_at)
+    VALUES ('test-account', 'Test Account', 'checking', 'Test Bank', 'USD', TRUE, datetime('now'), datetime('now'))
+  `).run();
+
+  handler = new UploadHandler(dbPath);
+
+  // Create test file (Apple Card format to match detection rules)
+  testFilePath = `test-file-${Date.now()}.csv`;
+  writeFileSync(testFilePath,
+    'Transaction Date,Clearing Date,Description,Merchant,Category,Type,Amount (USD)\n' +
+    '09/01/2025,09/01/2025,TEST,Test Merchant,Food,Debit,50.00');
+});
+
+afterEach(() => {
+  handler.close();
+  db.close();
+
+  // Cleanup
+  try {
+    unlinkSync(dbPath);
+    if (testFilePath) unlinkSync(testFilePath);
+  } catch {}
+});
+@
+
+<<upload-test-calculate-hash>>=
+test('calculateHash generates consistent SHA256', () => {
+  const hash1 = handler.calculateHash(testFilePath);
+  const hash2 = handler.calculateHash(testFilePath);
+
+  expect(hash1).toBe(hash2);
+  expect(hash1).toHaveLength(64);  // SHA256 = 64 hex chars
+});
+@
+
+<<upload-test-check-duplicate>>=
+test('checkDuplicate detects already uploaded files', () => {
+  const hash = handler.calculateHash(testFilePath);
+
+  // First check: not duplicate
+  expect(handler.checkDuplicate(hash)).toBe(false);
+
+  // Insert uploaded_files record
+  db.prepare(`
+    INSERT INTO uploaded_files (file_hash, file_path, uploaded_at, transaction_count)
+    VALUES (?, ?, datetime('now'), 0)
+  `).run(hash, testFilePath);
+
+  // Second check: is duplicate
+  expect(handler.checkDuplicate(hash)).toBe(true);
+});
+@
+
+<<upload-test-detect-bank>>=
+test('detectBank identifies Apple Card format', () => {
+  const appleCardContent = 'Transaction Date,Clearing Date,Description,Merchant,Category,Type,Amount (USD)';
+  const config = handler.detectBank(appleCardContent);
+
+  expect(config).not.toBeNull();
+  expect(config.institution).toBe('Apple Card');
+});
+
+test('detectBank returns null for unknown format', () => {
+  const unknownContent = 'Random file content that matches no bank';
+  const config = handler.detectBank(unknownContent);
+
+  expect(config).toBeNull();
+});
+@
+
+<<upload-test-upload-flow>>=
+test('upload flow creates uploaded_files record', async () => {
+  // Create Apple Card test file
+  const appleCardFile = `test-apple-${Date.now()}.csv`;
+  writeFileSync(appleCardFile,
+    'Transaction Date,Clearing Date,Description,Merchant,Category,Type,Amount (USD)\n' +
+    '09/01/2025,09/01/2025,STARBUCKS,Starbucks,Food,Debit,5.50'
+  );
+
+  const result = await handler.upload(appleCardFile, 'test-account');
+
+  // Verify uploaded_files record
+  const uploadedFile = db.prepare('SELECT * FROM uploaded_files WHERE file_hash = ?').get(result.fileHash);
+  expect(uploadedFile).not.toBeNull();
+  expect(uploadedFile.file_path).toBe(appleCardFile);
+
+  // Cleanup
+  unlinkSync(appleCardFile);
+});
+@
+
+<<upload-test-duplicate-prevention>>=
+test('upload prevents duplicate file uploads', async () => {
+  const result1 = await handler.upload(testFilePath, 'test-account');
+  expect(result1.duplicate).toBe(false);
+
+  const result2 = await handler.upload(testFilePath, 'test-account');
+  expect(result2.duplicate).toBe(true);
+  expect(result2.errors).toContain('File already uploaded');
+});
+@
+
+---
+
+**Tests Cubiertos:**
+
+✅ **calculateHash** - Genera SHA256 consistente de 64 chars
+✅ **checkDuplicate** - Detecta archivos ya subidos
+✅ **detectBank** - Identifica Apple Card y retorna null para unknown
+✅ **upload flow** - Crea uploaded_files record
+✅ **duplicate prevention** - Previene re-upload del mismo archivo
+
+**Edge Cases Soportados:**
+- Edge Case #1: Auto-detect bank format
+- Edge Case #12: Hash propio en vez de bank transaction IDs
+- Deduplication por file hash
+- Deduplication por transaction source_hash (INSERT OR IGNORE)
+
+**NOTE**: parseFile() es mock en Phase 1. La implementación completa con PDF/CSV parsing viene en Phase 2.
+
+**Status**: ✅ Task 6 completada con tests ejecutables
