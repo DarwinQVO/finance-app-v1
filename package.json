@@ -1,0 +1,30 @@
+{
+  "name": "finance-app",
+  "version": "0.1.0",
+  "description": "Complete personal finance tracker with literate programming",
+  "type": "module",
+  "scripts": {
+    "tangle": "node scripts/tangle.js",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:run": "vitest run",
+    "build": "npm run tangle && echo 'Build will use Vite later'",
+    "dev": "npm run tangle && echo 'Dev server will use Vite later'"
+  },
+  "keywords": [
+    "finance",
+    "literate-programming",
+    "personal-finance",
+    "transaction-tracker"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "vitest": "^1.0.4",
+    "@vitest/ui": "^1.0.4",
+    "better-sqlite3": "^9.2.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

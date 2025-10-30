@@ -14,8 +14,9 @@
 /UI_*.md
 /VALIDATION_*.md
 
-# Source code (solo documentación en repo)
+# Source code (GENERADO por npm run tangle - no commitear)
 /src/
+/tests/
 /app/
 /lib/
 
