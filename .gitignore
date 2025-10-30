@@ -19,6 +19,9 @@
 /app/
 /lib/
 
+# Internal/private docs
+docs/99-legacy/BRIEFING_*.md
+
 # Claude/AI config files
 .claude.json
 .claude/
