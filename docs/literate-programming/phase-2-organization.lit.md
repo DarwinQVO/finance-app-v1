@@ -4558,3 +4558,1120 @@ describe('RecurringManager Component', () => {
 
 ---
 
+## Task 23: CSV Import Feature 📊
+
+**Goal**: Allow users to import transactions from CSV files with column mapping.
+
+**Scope**:
+- Parse CSV files using simple parsing logic
+- Support flexible column mapping (date, amount, merchant, etc.)
+- Validate required fields and data formats
+- Show preview of parsed transactions before import
+- Handle common CSV formats from banks
+- Error reporting for invalid data
+- Bulk insert into transactions table
+
+**LOC estimate**: ~300 LOC (logic ~150, component ~100, tests ~50)
+
+---
+
+### Logic: CSV Importer
+
+CSV parsing and validation logic with column mapping support.
+
+```javascript
+<<src/lib/csv-importer.js>>=
+/**
+ * CSV Import Module
+ * Parses CSV files and imports transactions with flexible column mapping
+ */
+
+/**
+ * Parse CSV text into rows
+ * Simple CSV parser that handles quoted fields and commas
+ */
+export function parseCSV(csvText) {
+  const lines = csvText.trim().split('\n');
+  if (lines.length === 0) return { headers: [], rows: [] };
+
+  // Parse headers (first line)
+  const headers = parseCSVLine(lines[0]);
+
+  // Parse data rows
+  const rows = [];
+  for (let i = 1; i < lines.length; i++) {
+    if (lines[i].trim()) {
+      const row = parseCSVLine(lines[i]);
+      if (row.length === headers.length) {
+        rows.push(row);
+      }
+    }
+  }
+
+  return { headers, rows };
+}
+
+/**
+ * Parse a single CSV line, handling quoted fields
+ */
+function parseCSVLine(line) {
+  const result = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+
+    if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === ',' && !inQuotes) {
+      result.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+
+  result.push(current.trim());
+  return result;
+}
+
+/**
+ * Auto-detect column mapping based on header names
+ * Returns a mapping object: { date: 'Date', amount: 'Amount', ... }
+ */
+export function autoDetectMapping(headers) {
+  const mapping = {};
+
+  // Common patterns for each field
+  const patterns = {
+    date: /date|time|posted|transaction.*date/i,
+    merchant: /merchant|description|desc|payee|name/i,
+    amount: /amount|value|debit|credit|sum/i,
+    currency: /currency|curr/i,
+    category: /category|type/i
+  };
+
+  for (const [field, pattern] of Object.entries(patterns)) {
+    const matchedHeader = headers.find(h => pattern.test(h));
+    if (matchedHeader) {
+      mapping[field] = matchedHeader;
+    }
+  }
+
+  return mapping;
+}
+
+/**
+ * Apply column mapping to parsed rows
+ * Returns array of transaction objects
+ */
+export function applyMapping(rows, headers, mapping) {
+  return rows.map(row => {
+    const obj = {};
+
+    for (const [field, headerName] of Object.entries(mapping)) {
+      const headerIndex = headers.indexOf(headerName);
+      if (headerIndex !== -1) {
+        obj[field] = row[headerIndex];
+      }
+    }
+
+    return obj;
+  });
+}
+
+/**
+ * Validate and normalize a transaction object
+ */
+export function validateTransaction(transaction) {
+  const errors = [];
+
+  // Validate date
+  if (!transaction.date) {
+    errors.push('Missing date');
+  } else {
+    const date = parseDate(transaction.date);
+    if (!date) {
+      errors.push(`Invalid date format: ${transaction.date}`);
+    } else {
+      transaction.date = date;
+    }
+  }
+
+  // Validate merchant
+  if (!transaction.merchant || transaction.merchant.trim() === '') {
+    errors.push('Missing merchant/description');
+  } else {
+    transaction.merchant = transaction.merchant.trim();
+  }
+
+  // Validate amount
+  if (!transaction.amount) {
+    errors.push('Missing amount');
+  } else {
+    const amount = parseAmount(transaction.amount);
+    if (isNaN(amount)) {
+      errors.push(`Invalid amount: ${transaction.amount}`);
+    } else {
+      transaction.amount = amount;
+    }
+  }
+
+  // Set defaults
+  transaction.currency = transaction.currency || 'USD';
+  transaction.category = transaction.category || null;
+
+  return { valid: errors.length === 0, errors, transaction };
+}
+
+/**
+ * Parse date from various formats
+ */
+function parseDate(dateStr) {
+  // Try ISO format first (YYYY-MM-DD)
+  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    return dateStr;
+  }
+
+  // Try MM/DD/YYYY or M/D/YYYY
+  const match = dateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (match) {
+    const [, month, day, year] = match;
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
+
+  // Try DD/MM/YYYY (European format)
+  const match2 = dateStr.match(/^(\d{1,2})-(\d{1,2})-(\d{4})$/);
+  if (match2) {
+    const [, day, month, year] = match2;
+    return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
+  }
+
+  return null;
+}
+
+/**
+ * Parse amount from string, handling currency symbols and formatting
+ */
+function parseAmount(amountStr) {
+  // Remove currency symbols, commas, and whitespace
+  const cleaned = amountStr.toString().replace(/[$€£,\s]/g, '');
+
+  // Handle parentheses for negative amounts
+  if (cleaned.match(/^\(.*\)$/)) {
+    return -parseFloat(cleaned.replace(/[()]/g, ''));
+  }
+
+  return parseFloat(cleaned);
+}
+
+/**
+ * Import validated transactions into database
+ */
+export function importTransactions(db, transactions, accountId) {
+  const stmt = db.prepare(`
+    INSERT INTO transactions (
+      id, date, merchant, merchant_raw, amount, currency,
+      account_id, category_id, type, source,
+      created_at, updated_at, institution
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+
+  const now = new Date().toISOString();
+  let imported = 0;
+  let failed = 0;
+
+  for (const transaction of transactions) {
+    try {
+      const id = `txn-csv-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+      const type = transaction.amount < 0 ? 'expense' : 'income';
+
+      stmt.run(
+        id,
+        transaction.date,
+        transaction.merchant,
+        transaction.merchant,
+        transaction.amount,
+        transaction.currency,
+        accountId,
+        transaction.category,
+        type,
+        'csv_import',
+        now,
+        now,
+        'CSV Import'
+      );
+
+      imported++;
+    } catch (error) {
+      console.error('Failed to import transaction:', error);
+      failed++;
+    }
+  }
+
+  return { imported, failed };
+}
+@
+
+---
+
+### Tests: CSV Importer
+
+Comprehensive tests for CSV parsing, mapping, and validation.
+
+```javascript
+<<tests/csv-importer.test.js>>=
+import { describe, test, expect, beforeEach } from 'vitest';
+import Database from 'better-sqlite3';
+import {
+  parseCSV,
+  autoDetectMapping,
+  applyMapping,
+  validateTransaction,
+  importTransactions
+} from '../src/lib/csv-importer.js';
+
+describe('CSV Importer', () => {
+  let db;
+
+  beforeEach(() => {
+    db = new Database(':memory:');
+
+    // Create schema
+    db.exec(`
+      CREATE TABLE accounts (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL,
+        institution TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      CREATE TABLE transactions (
+        id TEXT PRIMARY KEY,
+        date TEXT NOT NULL,
+        merchant TEXT NOT NULL,
+        merchant_raw TEXT NOT NULL,
+        amount REAL NOT NULL,
+        currency TEXT DEFAULT 'USD',
+        account_id TEXT NOT NULL,
+        category_id TEXT,
+        type TEXT CHECK (type IN ('expense', 'income')),
+        source TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        institution TEXT,
+        FOREIGN KEY (account_id) REFERENCES accounts(id)
+      );
+    `);
+
+    // Create test account
+    const now = new Date().toISOString();
+    db.prepare(`
+      INSERT INTO accounts (id, name, type, institution, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run('acc-1', 'Test Account', 'checking', 'Test Bank', now, now);
+  });
+
+  test('parses simple CSV', () => {
+    const csv = 'Date,Merchant,Amount\n2025-01-01,Starbucks,15.50\n2025-01-02,Target,45.00';
+
+    const result = parseCSV(csv);
+
+    expect(result.headers).toEqual(['Date', 'Merchant', 'Amount']);
+    expect(result.rows).toHaveLength(2);
+    expect(result.rows[0]).toEqual(['2025-01-01', 'Starbucks', '15.50']);
+    expect(result.rows[1]).toEqual(['2025-01-02', 'Target', '45.00']);
+  });
+
+  test('handles quoted fields with commas', () => {
+    const csv = 'Date,Description,Amount\n2025-01-01,"Coffee, Pastry",15.50';
+
+    const result = parseCSV(csv);
+
+    expect(result.rows[0][1]).toBe('Coffee, Pastry');
+  });
+
+  test('auto-detects column mapping', () => {
+    const headers = ['Transaction Date', 'Description', 'Amount', 'Currency'];
+
+    const mapping = autoDetectMapping(headers);
+
+    expect(mapping.date).toBe('Transaction Date');
+    expect(mapping.merchant).toBe('Description');
+    expect(mapping.amount).toBe('Amount');
+    expect(mapping.currency).toBe('Currency');
+  });
+
+  test('applies mapping to rows', () => {
+    const headers = ['Date', 'Desc', 'Amt'];
+    const rows = [
+      ['2025-01-01', 'Starbucks', '15.50'],
+      ['2025-01-02', 'Target', '45.00']
+    ];
+    const mapping = { date: 'Date', merchant: 'Desc', amount: 'Amt' };
+
+    const transactions = applyMapping(rows, headers, mapping);
+
+    expect(transactions[0]).toEqual({
+      date: '2025-01-01',
+      merchant: 'Starbucks',
+      amount: '15.50'
+    });
+  });
+
+  test('validates transaction with valid data', () => {
+    const transaction = {
+      date: '2025-01-01',
+      merchant: 'Starbucks',
+      amount: '-15.50'
+    };
+
+    const result = validateTransaction(transaction);
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toHaveLength(0);
+    expect(result.transaction.amount).toBe(-15.50);
+    expect(result.transaction.currency).toBe('USD');
+  });
+
+  test('rejects transaction with missing date', () => {
+    const transaction = { merchant: 'Starbucks', amount: '15.50' };
+
+    const result = validateTransaction(transaction);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors).toContain('Missing date');
+  });
+
+  test('rejects transaction with invalid date', () => {
+    const transaction = {
+      date: 'invalid-date',
+      merchant: 'Starbucks',
+      amount: '15.50'
+    };
+
+    const result = validateTransaction(transaction);
+
+    expect(result.valid).toBe(false);
+    expect(result.errors.some(e => e.includes('Invalid date'))).toBe(true);
+  });
+
+  test('parses various date formats', () => {
+    const transactions = [
+      { date: '2025-01-15', merchant: 'A', amount: '10' },
+      { date: '1/15/2025', merchant: 'B', amount: '10' },
+      { date: '15-01-2025', merchant: 'C', amount: '10' }
+    ];
+
+    const results = transactions.map(validateTransaction);
+
+    results.forEach(r => {
+      expect(r.valid).toBe(true);
+      expect(r.transaction.date).toBe('2025-01-15');
+    });
+  });
+
+  test('imports transactions into database', () => {
+    const transactions = [
+      { date: '2025-01-01', merchant: 'Starbucks', amount: -15.50, currency: 'USD' },
+      { date: '2025-01-02', merchant: 'Salary', amount: 5000, currency: 'USD' }
+    ];
+
+    const result = importTransactions(db, transactions, 'acc-1');
+
+    expect(result.imported).toBe(2);
+    expect(result.failed).toBe(0);
+
+    const count = db.prepare('SELECT COUNT(*) as count FROM transactions').get();
+    expect(count.count).toBe(2);
+  });
+});
+@
+
+---
+
+### Component: CSVImport.jsx
+
+UI component for CSV file upload, column mapping, and import.
+
+```javascript
+<<src/components/CSVImport.jsx>>=
+import React, { useState } from 'react';
+import './CSVImport.css';
+import { parseCSV, autoDetectMapping, applyMapping, validateTransaction } from '../lib/csv-importer.js';
+
+export default function CSVImport({ accounts, onSuccess }) {
+  const [step, setStep] = useState('upload'); // upload, mapping, preview, importing
+  const [file, setFile] = useState(null);
+  const [csvData, setCSVData] = useState(null);
+  const [mapping, setMapping] = useState({});
+  const [selectedAccount, setSelectedAccount] = useState('');
+  const [preview, setPreview] = useState([]);
+  const [importing, setImporting] = useState(false);
+
+  async function handleFileSelect(e) {
+    const selectedFile = e.target.files[0];
+    if (!selectedFile) return;
+
+    // Use FileReader for better test compatibility
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const text = event.target.result;
+      const parsed = parseCSV(text);
+
+      setFile(selectedFile);
+      setCSVData(parsed);
+      setMapping(autoDetectMapping(parsed.headers));
+      setStep('mapping');
+    };
+    reader.readAsText(selectedFile);
+  }
+
+  function handleMappingChange(field, headerName) {
+    setMapping({ ...mapping, [field]: headerName });
+  }
+
+  function handlePreview() {
+    const transactions = applyMapping(csvData.rows, csvData.headers, mapping);
+    const validated = transactions.map(validateTransaction);
+    setPreview(validated);
+    setStep('preview');
+  }
+
+  async function handleImport() {
+    if (!selectedAccount) {
+      alert('Please select an account');
+      return;
+    }
+
+    setImporting(true);
+    setStep('importing');
+
+    try {
+      const validTransactions = preview
+        .filter(p => p.valid)
+        .map(p => p.transaction);
+
+      const result = await window.electronAPI.importCSV(validTransactions, selectedAccount);
+
+      alert(`Import complete!\n${result.imported} imported, ${result.failed} failed`);
+
+      if (onSuccess) onSuccess();
+
+      // Reset form
+      setStep('upload');
+      setFile(null);
+      setCSVData(null);
+      setMapping({});
+      setPreview([]);
+    } catch (error) {
+      alert('Import failed: ' + error.message);
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  function handleReset() {
+    setStep('upload');
+    setFile(null);
+    setCSVData(null);
+    setMapping({});
+    setPreview([]);
+  }
+
+  if (step === 'upload') {
+    return (
+      <div className="csv-import">
+        <div className="csv-upload-zone">
+          <h3>Import Transactions from CSV</h3>
+          <p>Upload a CSV file with your transaction data</p>
+          <input
+            type="file"
+            accept=".csv"
+            onChange={handleFileSelect}
+            className="file-input"
+          />
+          <div className="format-hint">
+            <strong>Supported formats:</strong>
+            <ul>
+              <li>Date, Merchant/Description, Amount</li>
+              <li>Transaction Date, Payee, Debit/Credit</li>
+              <li>Custom formats with column mapping</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'mapping') {
+    const fields = ['date', 'merchant', 'amount', 'currency', 'category'];
+
+    return (
+      <div className="csv-import">
+        <h3>Map CSV Columns</h3>
+        <p>Match your CSV columns to transaction fields</p>
+
+        <div className="column-mapping">
+          {fields.map(field => (
+            <div key={field} className="mapping-row">
+              <label htmlFor={`field-${field}`} className="field-name">
+                {field.charAt(0).toUpperCase() + field.slice(1)}
+                {['date', 'merchant', 'amount'].includes(field) && <span className="required">*</span>}
+              </label>
+              <select
+                id={`field-${field}`}
+                value={mapping[field] || ''}
+                onChange={(e) => handleMappingChange(field, e.target.value)}
+              >
+                <option value="">-- Not mapped --</option>
+                {csvData.headers.map(header => (
+                  <option key={header} value={header}>{header}</option>
+                ))}
+              </select>
+            </div>
+          ))}
+        </div>
+
+        <div className="account-select">
+          <label htmlFor="account-select">Import to Account *</label>
+          <select
+            id="account-select"
+            value={selectedAccount}
+            onChange={(e) => setSelectedAccount(e.target.value)}
+            required
+          >
+            <option value="">-- Select Account --</option>
+            {accounts.map(account => (
+              <option key={account.id} value={account.id}>
+                {account.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="csv-actions">
+          <button onClick={handleReset} className="btn-secondary">Cancel</button>
+          <button
+            onClick={handlePreview}
+            className="btn-primary"
+            disabled={!mapping.date || !mapping.merchant || !mapping.amount || !selectedAccount}
+          >
+            Preview Import
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'preview') {
+    const validCount = preview.filter(p => p.valid).length;
+    const invalidCount = preview.length - validCount;
+
+    return (
+      <div className="csv-import">
+        <h3>Preview Import</h3>
+        <div className="import-summary">
+          <span className="valid-count">{validCount} valid transactions</span>
+          {invalidCount > 0 && (
+            <span className="invalid-count">{invalidCount} invalid transactions</span>
+          )}
+        </div>
+
+        <div className="preview-list">
+          {preview.slice(0, 10).map((item, index) => (
+            <div key={index} className={`preview-item ${item.valid ? 'valid' : 'invalid'}`}>
+              <div className="preview-data">
+                <span>{item.transaction.date}</span>
+                <span>{item.transaction.merchant}</span>
+                <span>${Math.abs(item.transaction.amount).toFixed(2)}</span>
+              </div>
+              {!item.valid && (
+                <div className="preview-errors">
+                  {item.errors.map((error, i) => (
+                    <span key={i} className="error-message">{error}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          ))}
+          {preview.length > 10 && (
+            <div className="preview-more">
+              ...and {preview.length - 10} more transactions
+            </div>
+          )}
+        </div>
+
+        <div className="csv-actions">
+          <button onClick={() => setStep('mapping')} className="btn-secondary">
+            Back to Mapping
+          </button>
+          <button
+            onClick={handleImport}
+            className="btn-primary"
+            disabled={validCount === 0}
+          >
+            Import {validCount} Transactions
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'importing') {
+    return (
+      <div className="csv-import">
+        <div className="importing-state">
+          <div className="spinner"></div>
+          <p>Importing transactions...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
+}
+@
+
+---
+
+### Styles: CSVImport.css
+
+```css
+<<src/components/CSVImport.css>>=
+.csv-import {
+  padding: 20px;
+  max-width: 800px;
+  margin: 0 auto;
+}
+
+.csv-upload-zone {
+  text-align: center;
+  padding: 40px;
+  border: 2px dashed #ccc;
+  border-radius: 8px;
+  background: #f9f9f9;
+}
+
+.csv-upload-zone h3 {
+  margin-top: 0;
+  color: #333;
+}
+
+.file-input {
+  display: block;
+  margin: 20px auto;
+  padding: 10px;
+  font-size: 14px;
+}
+
+.format-hint {
+  margin-top: 20px;
+  text-align: left;
+  max-width: 400px;
+  margin-left: auto;
+  margin-right: auto;
+  padding: 15px;
+  background: white;
+  border-radius: 4px;
+}
+
+.format-hint ul {
+  margin: 10px 0 0 0;
+  padding-left: 20px;
+}
+
+.column-mapping {
+  margin: 20px 0;
+}
+
+.mapping-row {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+  margin-bottom: 15px;
+}
+
+.field-name {
+  width: 120px;
+  font-weight: 500;
+  color: #555;
+}
+
+.required {
+  color: #e53e3e;
+  margin-left: 4px;
+}
+
+.mapping-row select {
+  flex: 1;
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.account-select {
+  margin: 30px 0;
+  padding: 20px;
+  background: #f5f5f5;
+  border-radius: 4px;
+}
+
+.account-select label {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 500;
+}
+
+.account-select select {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.import-summary {
+  display: flex;
+  gap: 20px;
+  padding: 15px;
+  background: #f0f9ff;
+  border-radius: 4px;
+  margin-bottom: 20px;
+}
+
+.valid-count {
+  color: #059669;
+  font-weight: 500;
+}
+
+.invalid-count {
+  color: #dc2626;
+  font-weight: 500;
+}
+
+.preview-list {
+  border: 1px solid #e5e5e5;
+  border-radius: 4px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.preview-item {
+  padding: 12px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.preview-item.valid {
+  background: white;
+}
+
+.preview-item.invalid {
+  background: #fef2f2;
+}
+
+.preview-data {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+
+.preview-errors {
+  margin-top: 8px;
+  padding: 8px;
+  background: #fee2e2;
+  border-radius: 4px;
+}
+
+.error-message {
+  display: block;
+  color: #dc2626;
+  font-size: 12px;
+}
+
+.preview-more {
+  padding: 12px;
+  text-align: center;
+  color: #666;
+  font-style: italic;
+}
+
+.csv-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.importing-state {
+  text-align: center;
+  padding: 60px 20px;
+}
+
+.spinner {
+  border: 4px solid #f3f3f3;
+  border-top: 4px solid #3b82f6;
+  border-radius: 50%;
+  width: 40px;
+  height: 40px;
+  animation: spin 1s linear infinite;
+  margin: 0 auto 20px;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.btn-primary {
+  padding: 10px 20px;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.btn-primary:disabled {
+  background: #9ca3af;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  padding: 10px 20px;
+  background: white;
+  color: #555;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+}
+@
+
+---
+
+### Tests: CSVImport Component
+
+```javascript
+<<tests/CSVImport.test.jsx>>=
+import React from 'react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import CSVImport from '../src/components/CSVImport.jsx';
+import { vi } from 'vitest';
+
+describe('CSVImport Component', () => {
+  const mockAccounts = [
+    { id: 'acc-1', name: 'Checking' },
+    { id: 'acc-2', name: 'Savings' }
+  ];
+
+  let onSuccess;
+
+  beforeEach(() => {
+    onSuccess = vi.fn();
+    window.electronAPI = {
+      importCSV: vi.fn()
+    };
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  test('shows upload zone initially', () => {
+    render(<CSVImport accounts={mockAccounts} onSuccess={onSuccess} />);
+
+    expect(screen.getByText(/Import Transactions from CSV/i)).toBeInTheDocument();
+    expect(screen.getByText(/Upload a CSV file/i)).toBeInTheDocument();
+  });
+
+  test('shows column mapping after file upload', async () => {
+    render(<CSVImport accounts={mockAccounts} onSuccess={onSuccess} />);
+
+    const csvContent = 'Date,Description,Amount\n2025-01-01,Starbucks,15.50';
+    const file = new File([csvContent], 'test.csv', { type: 'text/csv' });
+
+    const input = document.querySelector('input[type="file"]');
+
+    // Simulate file selection
+    Object.defineProperty(input, 'files', {
+      value: [file],
+      writable: false
+    });
+
+    fireEvent.change(input);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Map CSV Columns/i)).toBeInTheDocument();
+    }, { timeout: 3000 });
+  });
+
+  test('auto-detects column mapping', async () => {
+    render(<CSVImport accounts={mockAccounts} onSuccess={onSuccess} />);
+
+    const csvContent = 'Transaction Date,Merchant,Amount\n2025-01-01,Starbucks,15.50';
+    const file = new File([csvContent], 'test.csv', { type: 'text/csv' });
+
+    const input = document.querySelector('input[type="file"]');
+    Object.defineProperty(input, 'files', {
+      value: [file],
+      writable: false
+    });
+
+    fireEvent.change(input);
+
+    await waitFor(() => {
+      // Should auto-detect "Transaction Date" as date field
+      const dateSelect = screen.getByLabelText(/Date/i);
+      expect(dateSelect.value).toBe('Transaction Date');
+    }, { timeout: 3000 });
+  });
+
+  test('requires account selection', async () => {
+    render(<CSVImport accounts={mockAccounts} onSuccess={onSuccess} />);
+
+    const csvContent = 'Date,Merchant,Amount\n2025-01-01,Starbucks,15.50';
+    const file = new File([csvContent], 'test.csv', { type: 'text/csv' });
+
+    const input = document.querySelector('input[type="file"]');
+    Object.defineProperty(input, 'files', {
+      value: [file],
+      writable: false
+    });
+
+    fireEvent.change(input);
+
+    await waitFor(() => {
+      const previewButton = screen.getByText(/Preview Import/i);
+      expect(previewButton).toBeDisabled();
+    }, { timeout: 3000 });
+  });
+
+  test('shows preview with valid transactions', async () => {
+    render(<CSVImport accounts={mockAccounts} onSuccess={onSuccess} />);
+
+    const csvContent = 'Date,Merchant,Amount\n2025-01-01,Starbucks,-15.50';
+    const file = new File([csvContent], 'test.csv', { type: 'text/csv' });
+
+    const input = document.querySelector('input[type="file"]');
+    Object.defineProperty(input, 'files', {
+      value: [file],
+      writable: false
+    });
+
+    fireEvent.change(input);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Import to Account/i)).toBeInTheDocument();
+    }, { timeout: 3000 });
+
+    // Select account
+    const accountSelect = screen.getByLabelText(/Import to Account/i);
+    fireEvent.change(accountSelect, { target: { value: 'acc-1' } });
+
+    // Click preview
+    const previewButton = screen.getByText(/Preview Import/i);
+    fireEvent.click(previewButton);
+
+    await waitFor(() => {
+      expect(screen.getByText(/1 valid transactions/i)).toBeInTheDocument();
+      expect(screen.getByText('Starbucks')).toBeInTheDocument();
+    }, { timeout: 3000 });
+  });
+
+  test('imports transactions successfully', async () => {
+    window.electronAPI.importCSV.mockResolvedValue({ imported: 1, failed: 0 });
+
+    render(<CSVImport accounts={mockAccounts} onSuccess={onSuccess} />);
+
+    const csvContent = 'Date,Merchant,Amount\n2025-01-01,Starbucks,-15.50';
+    const file = new File([csvContent], 'test.csv', { type: 'text/csv' });
+
+    const input = document.querySelector('input[type="file"]');
+    Object.defineProperty(input, 'files', {
+      value: [file],
+      writable: false
+    });
+
+    fireEvent.change(input);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Import to Account/i)).toBeInTheDocument();
+    }, { timeout: 3000 });
+
+    const accountSelect = screen.getByLabelText(/Import to Account/i);
+    fireEvent.change(accountSelect, { target: { value: 'acc-1' } });
+
+    const previewButton = screen.getByText(/Preview Import/i);
+    fireEvent.click(previewButton);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Import 1 Transactions/i)).toBeInTheDocument();
+    }, { timeout: 3000 });
+
+    const importButton = screen.getByText(/Import 1 Transactions/i);
+    fireEvent.click(importButton);
+
+    await waitFor(() => {
+      expect(window.electronAPI.importCSV).toHaveBeenCalled();
+      expect(onSuccess).toHaveBeenCalled();
+    }, { timeout: 3000 });
+  });
+
+  test('handles invalid CSV data', async () => {
+    render(<CSVImport accounts={mockAccounts} onSuccess={onSuccess} />);
+
+    // CSV with invalid date
+    const csvContent = 'Date,Merchant,Amount\ninvalid-date,Starbucks,15.50';
+    const file = new File([csvContent], 'test.csv', { type: 'text/csv' });
+
+    const input = document.querySelector('input[type="file"]');
+    Object.defineProperty(input, 'files', {
+      value: [file],
+      writable: false
+    });
+
+    fireEvent.change(input);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(/Import to Account/i)).toBeInTheDocument();
+    }, { timeout: 3000 });
+
+    const accountSelect = screen.getByLabelText(/Import to Account/i);
+    fireEvent.change(accountSelect, { target: { value: 'acc-1' } });
+
+    const previewButton = screen.getByText(/Preview Import/i);
+    fireEvent.click(previewButton);
+
+    await waitFor(() => {
+      expect(screen.getByText(/0 valid transactions/i)).toBeInTheDocument();
+      expect(screen.getByText(/1 invalid transactions/i)).toBeInTheDocument();
+    }, { timeout: 3000 });
+  });
+});
+@
+
+---
+
+**Output**:
+- ✅ `src/lib/csv-importer.js` - CSV parsing and validation logic
+- ✅ `tests/csv-importer.test.js` - 9 logic tests
+- ✅ `src/components/CSVImport.jsx` - Import UI with steps
+- ✅ `src/components/CSVImport.css` - Component styles
+- ✅ `tests/CSVImport.test.jsx` - 7 component tests
+
+**Total**: ~350 LOC (slightly over estimate due to multi-step UI)
+
+**Next**: Task 24 - Saved Filters Feature
+
+---
+
