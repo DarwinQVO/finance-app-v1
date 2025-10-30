@@ -1,179 +1,388 @@
 # Finance App - Complete System Overview
 
-**La descripción completa de qué ES y qué HACE la aplicación**
+**Descripción completa de qué ES y qué HACE la aplicación**
 
 ---
 
 ## 🎯 ¿Qué es Finance App?
 
-Finance App es un **sistema completo de finanzas personales** que te permite manejar todas tus cuentas bancarias, tarjetas de crédito, y transacciones en un solo lugar.
+Sistema completo de finanzas personales que automatiza el flujo completo:
 
-**No es**: Un gestor de presupuestos simple, ni un tracker de gastos básico.
+```
+PDFs bancarios → Parsing automático → Timeline unificado →
+Auto-categorización → Budget tracking → Reports/Analytics
+```
 
-**Es**: Un sistema completo que va desde raw PDFs bancarios hasta analytics avanzados, budgets inteligentes, y sincronización multi-dispositivo.
+**Scope**: Sistema completo, no MVP minimalista. Diseñado para manejar desde el primer PDF hasta 100k+ transacciones.
 
 ---
 
-## 💡 Filosofía del Sistema
+## 💡 Principios de Diseño
 
 ### Local-First
-- Toda tu data vive en SQLite local
-- No hay servidor necesario para funcionalidad básica
-- Privacy total - tu data nunca sale de tu máquina (a menos que quieras sync)
+
+**Implementación**:
+- Data almacenada en SQLite local
+- No requiere servidor para funcionalidad básica
+- Privacy: data no sale de la máquina del usuario (sync opcional en Phase 4)
+
+**Beneficio**: Control total sobre los datos financieros personales.
 
 ### Config-Driven
-- Agregar un banco nuevo = agregar config YAML, NO escribir código
-- Reglas de normalización = data en DB, NO hardcoded
-- Todo es parametrizable
+
+**Implementación**:
+- Agregar banco = INSERT config en DB, no código
+- Normalization rules en DB, no hardcoded
+- Usuario puede extender sin modificar código
+
+**Beneficio**: Extensibilidad sin depender de developers.
 
 ### Single Source of Truth
-- UNA tabla core (`transactions`) con TODOS los campos
+
+**Implementación**:
+- 1 tabla core (`transactions`) con todos los campos
 - Tablas auxiliares solo cuando necesario
 - No duplicación de data
 
+**Beneficio**: Simplicidad arquitectónica, queries eficientes, no inconsistencias.
+
 ### Multi-Currency Native
-- Maneja USD, MXN, EUR, GBP, etc. simultáneamente
+
+**Implementación**:
+- Soporte simultáneo para USD, MXN, EUR, GBP, etc.
 - Exchange rates automáticos
-- Reportes pueden combinar todas las monedas
+- Reportes combinan monedas con conversión
+
+**Beneficio**: Funciona para usuarios con cuentas en múltiples países/monedas.
 
 ---
 
-## 📊 Capacidades Completas del Sistema
+## 📊 Capacidades del Sistema
 
-### 1. 🏦 Multi-Account Management
+### 1. Multi-Account Management
 
-**Qué hace**:
-- Soporta múltiples bancos, tarjetas, y tipos de cuenta
-- Timeline unificado: VE todas tus transacciones de TODAS tus cuentas en un solo lugar
-- Cada cuenta tiene su propio color, icon, y metadata
+**Funcionalidad**:
+- Soporte para múltiples bancos y cuentas
+- Timeline unificado muestra todas las transacciones
+- Cada cuenta tiene metadata (color, icon, balance actual)
 
-**Ejemplo real**:
-- Bank of America Checking (USD)
-- Apple Card (USD)
-- Wise Multi-Currency (USD, EUR, GBP)
-- Scotiabank México (MXN)
-
-**Cómo funciona**:
+**Ejemplo**:
 ```
-User arrastra PDF → Sistema detecta banco automáticamente →
-Parsea con config del banco → Inserta en timeline único
+Timeline Unificado:
+  Today
+    Starbucks         -$5.67    [BofA]
+    Uber              -$23.40   [Apple Card]
+
+  Yesterday
+    Salary          +$3,500.00  [BofA]
+    Amazon            -$89.99   [Apple Card]
+    Transfer        -$1,000.00  [BofA → Wise]
 ```
 
-**Sin fricción**: No hay "modo setup" vs "modo daily". Subes un PDF hoy, mañana, en 6 meses = mismo flujo.
+**Workflow**:
+1. Usuario arrastra PDF
+2. Sistema detecta banco automáticamente (keywords)
+3. Parsea según config del banco
+4. Inserta en timeline unificado
+
+**Característica**: Sin "setup mode" separado. Mismo flujo para primer PDF y PDF #100.
 
 ---
 
-### 1.5. 💳 Credit Card Balance Tracking
+### 2. Credit Card Balance Tracking
 
-**Qué hace**:
+**Funcionalidad**:
 - Trackea saldo actual de tarjetas de crédito
-- Extrae "Statement Balance" y "Due Date" de PDFs
-- Alertas de pagos próximos a vencer
-- Dashboard muestra cuánto debes en total
+- Extrae Statement Balance y Due Date de PDFs
+- Dashboard centralizado de todas las tarjetas
+- Alertas configurables (7 días, 3 días, 1 día antes)
 
-**Ejemplo real**:
+**Dashboard Example**:
 ```
-Apple Card Statement - October 2025
-Statement Balance: $500.00
-Payment Due: November 15, 2025
-
-Dashboard muestra:
 ┌─────────────────────────────┐
-│ Credit Cards                │
+│ Credit Cards - Total Owed   │
 ├─────────────────────────────┤
 │ Apple Card                  │
 │ Balance: $500.00            │
 │ Due: Nov 15 (5 days)   ⚠️   │
+├─────────────────────────────┤
+│ Chase                       │
+│ Balance: $1,234.56          │
+│ Due: Nov 20 (10 days)  🟡   │
+├─────────────────────────────┤
+│ TOTAL OWED: $1,734.56       │
 └─────────────────────────────┘
 ```
 
-**Cómo funciona**:
-- Parser extrae balance final del statement
-- Guarda en `accounts.balance_current`
-- Guarda due date en `accounts.payment_due_date`
-- Alertas automáticas 7 días antes del vencimiento
-
-**Tipos de cuenta soportados**:
-- `checking` - Cuenta corriente
-- `savings` - Cuenta de ahorros
-- `credit_card` - Tarjeta de crédito (trackea deuda)
-- `investment` - Cuentas de inversión
-
-**Dashboard de deudas**:
-```
-Liabilities (lo que debes):
-  Apple Card:    -$500.00 (due Nov 15)
-  Chase:       -$1,234.56 (due Nov 20)
-  ────────────────────────────────────
-  Total credit: -$1,734.56
-```
+**Data Source**: Parser extrae del statement PDF → guarda en `accounts.balance_current` y `accounts.payment_due_date`
 
 ---
 
-### 2. 📄 Intelligent Document Processing
+### 3. Intelligent Document Processing
 
-**Qué hace**:
-- Acepta PDFs bancarios de cualquier formato
-- Parsea automáticamente (config-driven, no hardcoded)
-- Extrae: fecha, merchant, amount, currency, tipo
-- Deduplicación automática (no procesa el mismo PDF dos veces)
+**Funcionalidad**:
+- Procesa PDFs bancarios de múltiples formatos
+- Parsers config-driven (no hardcoded)
+- Extrae: date, merchant, amount, currency, type
+- Deduplicación automática (source_hash)
 
-**Parsers soportados** (extensible vía config):
+**Parsers Soportados** (extensible vía config):
 - Bank of America (formato tabular US)
 - Apple Card (formato Apple específico)
-- Wise (multi-currency, formatos variados)
-- Scotiabank México (español, MXN)
-- Cualquier otro banco → Agregar config YAML
+- Wise (multi-currency)
+- Scotiabank México (español, formato MXN)
+- Cualquier otro → agregar config YAML
 
-**Pipeline invisible**:
+**Pipeline**:
 ```
-PDF → Extract text → Parse → Normalize merchant → Deduplicate → Timeline
+PDF → Extract text → Detect bank → Parse → Normalize → Deduplicate → Timeline
 ```
 
-User solo ve: "PDF subido ✅ → Transacciones aparecen"
+**Performance**: 5 PDFs × 40 transacciones = 200 transacciones procesadas en ~30 segundos.
+
+**Extensibilidad**:
+```sql
+-- Agregar nuevo banco
+INSERT INTO parser_configs (id, name, detection_keywords, field_config)
+VALUES ('new_bank', 'Nuevo Banco', '["Keyword1", "Keyword2"]', '{...}');
+```
+
+Tiempo: ~5 minutos | Código: 0 LOC
 
 ---
 
-### 2.5. 📋 Invoice & Receivables Processing
+### 4. Unified Timeline
 
-**Qué hace**:
-- Parsea invoices (facturas que emitiste a clientes)
-- Trackea cuentas por cobrar (receivables)
-- Linkea automáticamente cuando el cliente paga
+**Funcionalidad**:
+- Vista cronológica de todas las transacciones
+- Infinite scroll (carga 100 a la vez)
+- Agrupación por fecha (Today, Yesterday, fecha específica)
+- Color-coding por cuenta
+
+**Features**:
+- Click transaction → Panel lateral con detalles completos
+- Icons automáticos por merchant
+- Colors por tipo (expense, income, transfer)
+- Keyboard shortcuts (j/k navegación, enter abrir)
+
+**Performance**:
+- 12,000 transacciones = load en <500ms
+- Scroll infinito seamless
+- Búsqueda full-text <300ms
+
+**Implementación**: Pagination + indexes en SQLite (date, merchant, category, account)
+
+---
+
+### 5. Advanced Filtering
+
+**Funcionalidad**:
+- Filtros múltiples: account, date range, type, category, merchant, tags
+- Lógica AND para combinar filtros
+- Búsqueda full-text en descriptions
+- Saved filters (guarda combinaciones frecuentes)
+
+**Ejemplos**:
+```
+Filter 1: Account=BofA + Type=expense + Merchant=Starbucks + Date=Sep 2025
+Filter 2: Type=transfer + Accounts=[BofA, Wise]
+Filter 3: Category="Food & Dining" + Amount>50 + Type=expense
+```
+
+---
+
+### 6. Smart Categorization
+
+**Funcionalidad**:
+- Categorías jerárquicas (Food → Restaurants, Groceries, Coffee)
+- Auto-categorización basada en merchant
+- Aprende de edits del usuario
+- Custom categories
+
+**Default Categories** (20+ incluidas):
+```
+🍔 Food & Dining
+  ├─ Restaurants
+  ├─ Groceries
+  └─ Coffee Shops
+🚗 Transportation
+  ├─ Gas & Fuel
+  ├─ Parking
+  └─ Ride Share
+🛍️ Shopping
+🎬 Entertainment
+💡 Bills & Utilities
+```
+
+**Auto-categorization**:
+```
+Transaction: "STARBUCKS STORE #12345"
+→ Normaliza: "Starbucks"
+→ Rule: Si merchant = "Starbucks" → Category: Coffee Shops
+→ Auto-categoriza ✅
+```
+
+**Learning**: User cambia categoría una vez → aplica automáticamente a futuras transacciones del mismo merchant.
+
+---
+
+### 7. Budget Management
+
+**Funcionalidad**:
+- Crea budgets por: category, merchant, account, total spending
+- Time periods: monthly, quarterly, yearly, custom
+- Real-time tracking con progress bars
+- Alertas configurables (ej: 80%, 100%)
+- Rollover opcional (fondos no gastados pasan al siguiente período)
+
+**Example**:
+```
+Budget: "Food & Dining - Monthly"
+Limit: $800/month
+Spent: $634.50 (79%)
+Remaining: $165.50
+Status: ⚠️ Alert (close to limit)
+```
+
+**UI**: Card con gauge visual, color-coded (green <70%, yellow 70-100%, red >100%)
+
+---
+
+### 8. Recurring Transaction Detection
+
+**Funcionalidad**:
+- Detecta automáticamente subscriptions y recurring payments
+- Analiza intervalos entre transacciones del mismo merchant
+- Agrupa transacciones recurrentes
+- Predice próximo cargo
+- Alerta si no llega cuando esperado
+
+**Example**:
+```
+Recurring Group: "Netflix Subscription"
+Frequency: Monthly
+Expected Amount: $15.99 ± 5%
+Last Charge: Oct 15, 2025
+Next Expected: Nov 15, 2025
+Confidence: 95% (12 meses de historia)
+```
+
+**Algoritmo**: Mínimo 3 transacciones con intervalos consistentes (±10%) → marca como recurring.
+
+---
+
+### 9. Transfer Linking
+
+**Funcionalidad**:
+- Detecta automáticamente transfers entre cuentas propias
+- Linkea ambos lados del transfer
+- Evita contar dos veces en reports
+- Visual indicator (↔️)
+
+**Example**:
+```
+BofA: "Transfer to Wise" -$1,000.00
+Wise: "From Bank of America" +$1,000.00
+
+→ Sistema detecta: mismo monto, fecha similar, keywords
+→ Los linkea
+→ En reports: $0 net (no es gasto ni ingreso)
+```
+
+**Algoritmo**:
+1. Busca transactions con amount opuesto (±1%)
+2. Fechas dentro de 3 días
+3. Keywords: "transfer", "wire", "ACH", "Zelle"
+4. Si match → link ambos (campo `transfer_pair_id`)
+
+---
+
+### 10. Comprehensive Reports
+
+**Pre-built Reports** (6 incluidos):
+1. Spending by Category (pie chart)
+2. Spending Trends (line chart, monthly)
+3. Income vs Expenses (bar chart)
+4. Top Merchants (table)
+5. Budget Performance (gauge charts)
+6. Monthly Comparison (bar chart, year over year)
+
+**Custom Report Builder**:
+- Selecciona: data source, filters, grouping, aggregations
+- Genera chart o table automáticamente
+- Guarda y comparte
+
+**Example Output**:
+```
+Spending by Category (Sep 2025):
+  Food & Dining: 35% ($1,245)
+  Transportation: 20% ($712)
+  Shopping: 15% ($534)
+  Entertainment: 12% ($427)
+  Bills: 10% ($356)
+  Other: 8% ($285)
+```
+
+---
+
+### 11. Export & Sharing
+
+**Funcionalidad**:
+- Export a CSV (todas las transacciones + metadata)
+- Export a PDF (report con charts)
+- Export a JSON (full data dump)
+
+**Use Cases**:
+- Tax preparation
+- Backup completo
+- Analysis en Excel/Google Sheets
+
+**CSV Format**:
+```csv
+Date,Merchant,Amount,Currency,Type,Account,Category,Tags,Notes
+2025-09-28,Starbucks,-5.67,USD,expense,BofA,Coffee Shops,"work,morning",""
+```
+
+---
+
+### 12. Performance at Scale
+
+**Capacidad**:
+- Maneja 100k+ transactions sin lag
+- Timeline load <500ms (12k transactions)
+- Infinite scroll fluido
+- Search <300ms
+
+**Optimizaciones**:
+- Pagination (carga 100 a la vez)
+- Indexes: date, account_id, merchant, category_id
+- Virtual tables para full-text search
+- Batch operations para imports
+
+**Benchmark** (12,000 transactions, 2 años de historia):
+- Timeline load: <500ms
+- Filter application: <200ms
+- Search: <300ms
+- Report generation: <1s
+
+---
+
+### 13. Invoice & Receivables Processing
+
+**Funcionalidad**:
+- Parsea invoices (facturas emitidas a clientes)
+- Trackea cuentas por cobrar
+- Matching automático cuando cliente paga
 - Alertas de cobros vencidos
 
-**Ejemplo real - Invoice emitido**:
-```
-Invoice-2025-10-01.pdf (Cliente X)
-──────────────────────────────────
-Invoice #1234
-Bill To: Cliente X
-Amount Due: $1,200.00
-Date: October 1, 2025
-Due Date: October 14, 2025
-Status: Unpaid
+**Workflow**:
+1. Sube invoice PDF → parser extrae datos → crea receivable (status: pending)
+2. Cliente paga → entra en bank statement → matching automático → status: paid
+3. Si pasa due_date y sigue pending → status: overdue → alerta
 
-Finance App parsea y guarda como:
-- Type: receivable
-- Source: invoice
-- Status: pending
+**Dashboard**:
 ```
-
-**Ejemplo real - Pago recibido**:
-```
-BofA Statement - October 15
-──────────────────────────────────
-Oct 15: Client X deposit  +$1,200.00
-
-Finance App detecta:
-✅ Invoice #1234 matched!
-✅ Status: pending → paid
-✅ Payment date: Oct 15, 2025
-```
-
-**Dashboard de receivables**:
-```
-Receivables (te deben):
+Receivables:
 ┌────────────────────────────────┐
 │ Cliente X                      │
 │ Invoice #1234                  │
@@ -189,299 +398,50 @@ Receivables (te deben):
 Total por cobrar: $1,700.00
 ```
 
-**Matching automático**:
+**Matching Algorithm**:
 - Compara amounts exactos
-- Compara client name en invoice vs description
+- Compara client name en invoice vs transaction description
 - Sugiere match si confidence > 80%
 - Usuario confirma o rechaza
 
-**Tipos de invoice soportados**:
-- PDF invoices estándar
-- Excel/CSV exports de accounting software
-- Manual entry (crear invoice desde UI)
-
-**Loan tracking** (caso especial):
+**Loan Tracking** (caso especial):
 ```
-Transfer manual: BofA → Juan  $400
+Transfer manual: BofA → Juan $400
 Tag: "Préstamo a Juan"
 Expected return: Nov 1, 2025
 
-Finance App trackea como receivable:
-- Type: loan
-- Amount: $400
-- Due: Nov 1
-- Status: pending
-
-Dashboard muestra:
-Loans Out (prestaste):
-  Juan: $400 (due Nov 1)
+→ Trackea como receivable (type: loan)
+→ Dashboard muestra: "Loans Out: Juan $400 (due Nov 1)"
 ```
 
 ---
 
-### 3. ⏱️ Unified Timeline
+### 14. Data Security
 
-**Qué hace**:
-- Muestra TODAS las transacciones de TODAS las cuentas, cronológicamente
-- Infinite scroll (carga 100 a la vez, seamless)
-- Agrupadas por fecha ("Today", "Yesterday", "Sep 28, 2025")
-- Colores por cuenta (visual clarity)
-
-**Vista**:
-```
-Today
-  🍔 Starbucks           -$5.67    [BofA]
-  🚗 Uber                -$23.40   [Apple Card]
-
-Yesterday
-  📦 Amazon              -$89.99   [Apple Card]
-  💰 Salary Deposit    +$3,500.00  [BofA]
-
-Sep 26, 2025
-  ↔️  Transfer to Wise  -$1,000.00 [BofA]
-  ↔️  From BofA        +$1,000.00  [Wise]
-```
-
-**Features**:
-- Click transaction → Panel lateral con detalles completos
-- Icons automáticos (Starbucks = ☕, Amazon = 📦, Uber = 🚗)
-- Amounts coloreados (red = expense, green = income, blue = transfer)
-
----
-
-### 4. 🔍 Advanced Filtering
-
-**Qué hace**:
-- Filtra por: account, date range, type, category, merchant, tags
-- Combina múltiples filtros (AND logic)
-- Búsqueda full-text en descriptions
-- Saved filters (guarda búsquedas frecuentes)
-
-**Ejemplos reales**:
-```
-"Todos los gastos en Starbucks de BofA en Septiembre"
-→ Account: BofA + Type: expense + Merchant: Starbucks + Date: Sep 2025
-
-"Transfers entre BofA y Wise"
-→ Type: transfer + Accounts: [BofA, Wise]
-
-"Gastos en Food & Dining > $50"
-→ Category: Food & Dining + Amount > 50 + Type: expense
-```
-
----
-
-### 5. 🏷️ Smart Categorization
-
-**Qué hace**:
-- Categorías jerárquicas predefinidas (Food → Restaurants, Groceries, Coffee)
-- Auto-categorización basada en merchant
-- Aprende de tus edits (si cambias Starbucks a "Coffee", se auto-aplica a futuras)
-- Custom categories (agrega tus propias)
-
-**Default Categories** (20+ incluidas):
-- 🍔 Food & Dining
-  - 🍽️ Restaurants
-  - 🛒 Groceries
-  - ☕ Coffee Shops
-- 🚗 Transportation
-  - ⛽ Gas & Fuel
-  - 🅿️ Parking
-  - 🚕 Ride Share
-- 🛍️ Shopping
-- 🎬 Entertainment
-- 💡 Bills & Utilities
-- 🏥 Healthcare
-- 💰 Income
-- ❓ Uncategorized
-
-**Cómo funciona**:
-```
-Transaction: "STARBUCKS STORE #12345"
-→ Normaliza a: "Starbucks"
-→ Rule: Si merchant = "Starbucks" → Category: Coffee Shops
-→ Auto-categoriza ✅
-```
-
----
-
-### 6. 💰 Budget Management
-
-**Qué hace**:
-- Crea budgets por: category, merchant, account, o total spending
-- Time periods: monthly, quarterly, yearly, custom
-- Real-time tracking con progress bars
-- Alertas cuando llegas al 80% o te pasas
-- Rollover (si no gastas todo, pasa al siguiente mes)
-
-**Ejemplo real**:
-```
-Budget: "Food & Dining - Monthly"
-Limit: $800/month
-Spent: $634.50 (79%)
-Remaining: $165.50
-Status: ⚠️ Alert (close to limit)
-```
-
-**UI**:
-- Card con gauge visual
-- Color: green (< 70%), yellow (70-100%), red (> 100%)
-- Notification cuando te pasas
-
----
-
-### 7. 🔄 Recurring Transaction Detection
-
-**Qué hace**:
-- Detecta automáticamente subscriptions y recurring payments
-- Aprende patterns (Netflix cobra cada 15 del mes)
-- Agrupa transacciones recurrentes
-- Predice próximo cargo
-- Alerta si no llega cuando debería
-
-**Ejemplo**:
-```
-Recurring Group: "Netflix Subscription"
-Frequency: Monthly
-Expected Amount: $15.99 ± 5%
-Last Charge: Oct 15, 2025
-Next Expected: Nov 15, 2025
-Confidence: 95% (detectado en 12 meses)
-```
-
-**Detección automática**:
-- Analiza intervalos entre transacciones del mismo merchant
-- Si intervalos son consistentes (±10%) → Marca como recurring
-- Mínimo 3 transacciones para detectar pattern
-
----
-
-### 8. 🔗 Transfer Linking
-
-**Qué hace**:
-- Detecta automáticamente cuando mueves dinero entre TUS cuentas
-- Linkea ambos lados del transfer
-- Evita contar dos veces en reports
-- Muestra ↔️ icon visual
-
-**Ejemplo**:
-```
-BofA Checking: "Transfer to Wise" -$1,000.00
-Wise: "From Bank of America" +$1,000.00
-
-→ Sistema detecta: mismo monto, fecha similar, keywords ("transfer")
-→ Los linkea automáticamente
-→ En reports: cuenta como $0 net (no es gasto ni ingreso)
-```
-
-**Algoritmo**:
-1. Busca transactions con amount opuesto (±1%)
-2. Fechas dentro de 3 días
-3. Keywords: "transfer", "wire", "ACH", "Zelle"
-4. Si match → Link ambos
-
----
-
-### 9. 📊 Comprehensive Reports
-
-**Qué hace**:
-- 6 reports pre-built:
-  1. Spending by Category (pie chart)
-  2. Spending Trends (line chart - monthly)
-  3. Income vs Expenses (bar chart)
-  4. Top Merchants (table)
-  5. Budget Performance (gauge charts)
-  6. Monthly Comparison (bar chart - year over year)
-
-- Custom Report Builder:
-  - Elige: data source, filters, grouping, aggregations
-  - Genera chart o table automáticamente
-  - Guarda y comparte
-
-**Ejemplo: Spending by Category**:
-```
-[Pie Chart]
-Food & Dining: 35% ($1,245)
-Transportation: 20% ($712)
-Shopping: 15% ($534)
-Entertainment: 12% ($427)
-Bills: 10% ($356)
-Other: 8% ($285)
-```
-
----
-
-### 10. 📤 Export & Sharing
-
-**Qué hace**:
-- Export a CSV (todas las transacciones con metadata completa)
-- Export a PDF (report bonito, con charts)
-- Export a JSON (full data dump para developers)
-
-**Use cases**:
-- Tax preparation (export todo el año → accountant)
-- Backup (export JSON completo)
-- Analysis en Excel (export CSV)
-
-**CSV includes**:
-```csv
-Date,Merchant,Amount,Currency,Type,Account,Category,Tags,Notes
-2025-09-28,Starbucks,-5.67,USD,expense,BofA,Coffee Shops,"work,morning",""
-```
-
----
-
-### 11. 🏃 Performance at Scale
-
-**Qué hace**:
-- Maneja 100k+ transactions sin lag
-- Timeline carga en <1 segundo
-- Infinite scroll fluido
-- Indexes optimizados en SQLite
-
-**Optimizaciones**:
-- Pagination (carga 100 a la vez)
-- Indexes en: date, account_id, merchant, category_id
-- Virtual tables para full-text search
-- Batch operations para imports
-
-**Benchmark**:
-```
-12,000 transactions (2 años):
-  - Timeline load: <500ms
-  - Filter: <200ms
-  - Search: <300ms
-  - Report generation: <1s
-```
-
----
-
-### 12. 🔐 Data Security
-
-**Qué hace**:
-- SQLite database encriptado (opcional)
+**Funcionalidad**:
+- SQLite database encriptado (opcional, AES-256)
 - No cloud storage por default (local-first)
-- Backups automáticos (daily, encrypted)
+- Backups automáticos (encrypted)
 - GDPR compliant (export/delete user data)
 
-**Privacy**:
-- Tu data NUNCA sale de tu máquina (single-user mode)
-- Multi-user mode (opcional) usa auth + data isolation
-- Mobile sync (opcional) usa encrypted channel
+**Privacy Modes**:
+- Single-user: Data NUNCA sale de la máquina
+- Multi-user: Auth + data isolation
+- Mobile sync: Encrypted channel (opcional, Phase 4)
 
 ---
 
-### 13. 👥 Multi-User Support (Optional)
+### 15. Multi-User Support (Phase 4)
 
-**Qué hace**:
-- Múltiples users en la misma máquina (o servidor)
-- Cada user ve SOLO su data
-- Shared accounts (opcional): comparte una cuenta con tu pareja
+**Funcionalidad**:
+- Múltiples users en la misma máquina o servidor
+- Data isolation (cada user ve solo su data)
+- Shared accounts opcional (ej: joint checking con pareja)
 - Permissions: view, edit, admin
 
-**Use case**:
+**Example**:
 ```
-User: Darwin
+User: el usuario
   Accounts: BofA, Apple Card, Wise
 
 User: Partner
@@ -493,44 +453,44 @@ Shared Account: Joint Checking
 
 ---
 
-### 14. 📱 Mobile App (Cross-Platform)
+### 16. Responsive Web Interface (Phase 4)
 
-**Qué hace**:
-- React Native app (iOS + Android)
-- Features core:
-  - View timeline
-  - Quick entry (add expense manually)
-  - Photo capture + OCR (toma foto del receipt → auto-extract)
-  - Offline mode (funciona sin internet)
-  - Push notifications (budget alerts, recurring reminders)
-  - Sync con desktop (automatic, background)
+**Platform**: Desktop-first with responsive web access
+
+**Core Features**:
+- Access via mobile browser (Chrome, Safari)
+- Touch-optimized interface
+- All desktop features available
+- No installation required (open in browser)
+- Push notifications (budget alerts, recurring reminders)
+- Sync con desktop (automatic, background)
 
 **Mobile-First Features**:
-- **Photo OCR**: Foto de receipt → Extrae merchant, amount, date
-- **Quick Add**: 2 taps para agregar gasto ($5 en Starbucks)
-- **Widgets**: Ver budget status en home screen
+- Photo OCR: Receipt photo → extrae merchant, amount, date
+- Quick Add: 2 taps para agregar gasto
+- Widgets: Budget status en home screen
 
 **Sync**:
 - Bidireccional (desktop ↔ mobile)
 - Conflict resolution (last write wins)
-- Offline queue (guarda changes, syncs cuando hay internet)
+- Offline queue (guarda changes, sync cuando hay internet)
 
 ---
 
-### 15. 🧮 Tax Calculations (Future)
+### 17. Tax Calculations (Future Extension)
 
-**Qué hace**:
+**Funcionalidad** (extensión futura):
 - Marca transactions como tax-deductible
 - Calcula tax owed/refund por category
 - Export tax report para CPA
 - Links a receipts (attachments)
 
-**Use case**:
+**Example**:
 ```
-Business expenses:
-  - Meals with clients: $2,340 (50% deductible)
-  - Home office: $1,200 (100% deductible)
-  - Travel: $3,456 (100% deductible)
+Business Expenses:
+  Meals with clients: $2,340 (50% deductible)
+  Home office: $1,200 (100% deductible)
+  Travel: $3,456 (100% deductible)
 
 Total deductible: $6,126
 Estimated tax savings (30%): $1,837.80
@@ -538,34 +498,34 @@ Estimated tax savings (30%): $1,837.80
 
 ---
 
-### 16. 🔔 Smart Notifications
+### 18. Smart Notifications
 
-**Qué hace**:
+**Funcionalidad**:
 - Budget alerts (80%, 100%, exceeded)
-- Recurring payment reminders ("Netflix due tomorrow")
-- Unusual spending ("You spent 3x your normal on Shopping this week")
+- Recurring payment reminders
+- Unusual spending detection
 - Transfer confirmations
-- Monthly summary ("You saved $400 this month!")
+- Monthly summary
 
-**Configurable**:
-- Choose which alerts to receive
+**Configuración**:
+- Usuario elige qué alerts recibir
 - Delivery: push notification, email, in-app
 - Frequency: real-time, daily digest, weekly summary
 
 ---
 
-### 17. 🎨 Customization
+### 19. Customization
 
-**Qué hace**:
+**Funcionalidad**:
 - Themes (light, dark, custom colors)
-- Account colors/icons (personaliza cada cuenta)
-- Custom categories (crea las tuyas)
-- Custom normalization rules (define cómo se limpian merchants)
-- Saved filters (quick access a búsquedas frecuentes)
+- Account colors/icons personalizables
+- Custom categories
+- Custom normalization rules
+- Saved filters
 
-**Personalización sin código**:
+**Example - Normalization Rule**:
 ```
-Normalization rule:
+Rule:
   Pattern: "AMZN*"
   Normalize to: "Amazon"
   Category: Shopping
@@ -573,18 +533,20 @@ Normalization rule:
 → Cualquier "AMZN MKTP US", "AMZN.COM", etc → "Amazon"
 ```
 
+**Beneficio**: Personalización sin código.
+
 ---
 
-### 18. 📈 Analytics & Insights
+### 20. Analytics & Insights
 
-**Qué hace**:
-- Spending trends (subiendo/bajando comparado con mes pasado)
-- Category breakdown (dónde gastas más)
-- Merchant frequency (cuántas veces vas a Starbucks)
+**Funcionalidad**:
+- Spending trends (comparado con mes anterior)
+- Category breakdown
+- Merchant frequency
 - Savings rate (income - expenses)
-- Net worth tracking (balances de todas las cuentas)
+- Net worth tracking (sum de balances)
 
-**Ejemplo: Monthly Insights**:
+**Example - Monthly Insights**:
 ```
 October 2025 Summary:
   Income: $5,200
@@ -594,7 +556,7 @@ October 2025 Summary:
   Top Category: Food & Dining ($1,120, +15% vs Sep)
   Top Merchant: Amazon ($234, 8 purchases)
 
-  Insight: ⚠️ You spent 15% more on food this month
+  Insight: ⚠️ Spending increased 15% in food category
 ```
 
 ---
@@ -603,42 +565,51 @@ October 2025 Summary:
 
 ### Database: Single Source of Truth
 
-**1 tabla core: `transactions`**
-- Contiene TODOS los campos para TODAS las features
-- Campos que no se usan aún = NULL (no hay problema)
-- NO hay "observations table" separada (over-engineering)
+**Core table: `transactions`**
 
-**Tablas auxiliares**:
-- `accounts`: Metadata de cuentas
-- `categories`: Categorías jerárquicas
-- `budgets`: Budget tracking
-- `recurring_groups`: Recurring patterns
-- `normalization_rules`: Merchant normalization config
-- `parser_configs`: Bank parser configs
-- `users`: Multi-user support
+Contiene:
+- Raw data: `original_description`
+- Normalized: `merchant`, `merchant_normalized`
+- Enriched: `category_id`, `tags`
+- Metadata: `source_file`, `source_hash`, `source_type`
+- Auditoria: `is_edited`, `edited_fields`, `created_at`, `updated_at`
+- Relationships: `transfer_pair_id`, `recurring_group_id`, `receivable_id`
+- Campos futuros: NULL (no problema, flexible schema)
+
+**Auxiliary Tables**:
+- `accounts` - Metadata de cuentas
+- `categories` - Categorías jerárquicas
+- `budgets` - Budget tracking
+- `recurring_groups` - Patterns detectados
+- `normalization_rules` - Merchant cleanup rules (config)
+- `parser_configs` - Bank parser configs (config)
+- `users` - Multi-user support (Phase 4)
+- `balance_checks` - Validación opcional (Phase 3)
+- `receivables` - Invoices & loans tracking
 
 **Filosofía**:
-- 1 tabla core con campos estratégicos
-- Auxiliares solo cuando necesario
+- 1 tabla core con todos los campos necesarios
+- Auxiliares solo cuando requerido
 - Config-driven (rules en DB, no código)
 
 ---
 
 ### Tech Stack
 
-**Desktop App**:
-- Electron (cross-platform: Windows, Mac, Linux)
+**Desktop** (Phase 1-3):
+- Electron (Windows, Mac, Linux)
 - React + TailwindCSS (UI)
 - SQLite (database)
-- pdf-parse (extract text from PDFs)
+- pdf-parse (text extraction)
+- Recharts (charts)
 
-**Mobile App**:
-- React Native (iOS + Android)
-- Redux (state management)
-- AsyncStorage (offline cache)
-- ML Kit (OCR for receipts)
+**Web** (Phase 4):
+- Responsive CSS (TailwindCSS breakpoints)
+- Touch-optimized controls (min 44px buttons)
+- REST API for web access
+- bcrypt + JWT authentication
 
-**Backend (optional, for multi-user)**:
+**Backend** (opcional, for multi-user):
 - Node.js + Express (REST API)
 - SQLite (can scale to PostgreSQL)
 
@@ -646,144 +617,69 @@ October 2025 Summary:
 
 ### Data Flow
 
+**High-Level Pipeline**:
 ```
-┌─────────────┐
-│  Upload PDF │
-└──────┬──────┘
-       │
-       ▼
-┌─────────────────┐
-│ Extract Text    │ (pdf-parse)
-└──────┬──────────┘
-       │
-       ▼
-┌─────────────────┐
-│ Detect Bank     │ (keywords match in parser_configs)
-└──────┬──────────┘
-       │
-       ▼
-┌─────────────────┐
-│ Parse           │ (config-driven parser)
-└──────┬──────────┘
-       │
-       ▼
-┌─────────────────┐
-│ Normalize       │ (normalization_rules)
-└──────┬──────────┘
-       │
-       ▼
-┌─────────────────┐
-│ Deduplicate     │ (source_hash check)
-└──────┬──────────┘
-       │
-       ▼
-┌─────────────────┐
-│ Categorize      │ (auto-categorization)
-└──────┬──────────┘
-       │
-       ▼
-┌─────────────────┐
-│ Link Transfers  │ (transfer detection)
-└──────┬──────────┘
-       │
-       ▼
-┌─────────────────┐
-│ Insert to DB    │ (transactions table)
-└──────┬──────────┘
-       │
-       ▼
-┌─────────────────┐
-│ Show in Timeline│ ✅
-└─────────────────┘
+Upload PDF
+    ↓
+Extract Text (pdf-parse)
+    ↓
+Detect Bank (keywords match in parser_configs)
+    ↓
+Parse (config-driven parser)
+    ↓
+Normalize (normalization_rules)
+    ↓
+Deduplicate (source_hash check)
+    ↓
+Categorize (auto-categorization)
+    ↓
+Link Transfers (transfer detection)
+    ↓
+Insert to DB (transactions table)
+    ↓
+Show in Timeline ✅
 ```
 
-**Invisible to user**: Solo ve "PDF subido → Transacciones aparecen"
+**Performance**: 42 transacciones procesadas en ~5 segundos.
 
 ---
 
-## 🎯 User Experience Philosophy
+## 🎓 Para Quién Es Finance App
 
-### No Setup Mode
-- No hay "step 1: setup accounts, step 2: import history"
-- Simplemente: sube un PDF, aparece en timeline
-- Hoy, mañana, en 6 meses = mismo flujo
+### Casos de Uso Principales
 
-### Intelligent Defaults
-- Auto-categorization (pero editable)
-- Auto merchant normalization (pero customizable)
-- Auto transfer detection (pero verificable)
+**Caso 1: Multi-Account User**
+- Situación: 5+ cuentas bancarias, 2-3 países, múltiples monedas
+- Necesidad: Vista unificada de todas las transacciones
+- Solución: Timeline unificado + multi-currency support
 
-### Progressive Disclosure
-- Starts simple (timeline + upload)
-- Descubres categories cuando las necesitas
-- Budgets cuando quieres trackear
-- Reports cuando quieres analizar
+**Caso 2: Budget-Conscious User**
+- Situación: Ingresos buenos, necesita control de gastos
+- Necesidad: Budgets tracking + alertas
+- Solución: Auto-categorización + budgets + recurring detection
 
-### Zero Friction
-- Drag & drop PDFs
-- Keyboard shortcuts everywhere
-- Quick actions (right-click menus)
-- No modals innecesarios
+**Caso 3: Privacy-Conscious User**
+- Situación: No confía en cloud apps
+- Necesidad: Control total sobre data financiera
+- Solución: Local-first + SQLite + sync opcional
 
----
+**Caso 4: Power User**
+- Situación: Necesita customización y extensibilidad
+- Necesidad: Agregar bancos propios, custom rules
+- Solución: Config-driven + custom categories/rules
 
-## 🔮 Future Extensibility
+### Ideal Para:
+- Múltiples cuentas bancarias (2-10 accounts)
+- Multi-currency users (expat, freelancer internacional)
+- Budget-conscious (control de gastos)
+- Privacy-conscious (local data)
+- Power users (customización, extensibilidad)
+- 5k-100k transactions (scale importante)
 
-### Fácil de Extender
-
-**Agregar nuevo banco**:
-1. Crea config YAML con regexes
-2. Inserta en `parser_configs` table
-3. ✅ Done - NO código
-
-**Agregar nueva categoría**:
-1. Click "Add Category"
-2. Nombre, icon, parent
-3. ✅ Done - NO código
-
-**Agregar nuevo report**:
-1. Crea query SQL
-2. Registra en report registry
-3. UI auto-generado
-4. ✅ Done - minimal código
-
----
-
-## 📊 System Capabilities Summary
-
-| Capability | Status |
-|------------|--------|
-| **Multi-account** | ✅ Unlimited accounts |
-| **Multi-bank** | ✅ Config-driven parsers |
-| **Multi-currency** | ✅ USD, MXN, EUR, GBP, etc. |
-| **Auto-categorization** | ✅ Rule-based + learning |
-| **Budgets** | ✅ Category, merchant, account, total |
-| **Recurring detection** | ✅ Automatic pattern detection |
-| **Transfer linking** | ✅ Automatic detection |
-| **Reports** | ✅ 6 pre-built + custom builder |
-| **Export** | ✅ CSV, PDF, JSON |
-| **Search** | ✅ Full-text + filters |
-| **Mobile** | ✅ iOS + Android + OCR |
-| **Offline** | ✅ Full functionality offline |
-| **Multi-user** | ✅ Auth + data isolation |
-| **Performance** | ✅ 100k+ transactions |
-| **Security** | ✅ Encrypted + local-first |
-
----
-
-## 🎓 Who Is This For?
-
-### ✅ Perfect For:
-- Personas con múltiples cuentas bancarias (2-10 accounts)
-- Multi-currency users (vives/trabajas en diferentes países)
-- Budget-conscious people (quieres control total)
-- Privacy-conscious (prefieres local data)
-- Power users (quieres customization)
-
-### ❌ NOT For:
-- Personas que solo quieren "tracker simple" (esto es completo)
-- Businesses que necesitan facturación (esto es personal finance)
-- Personas que no quieren subir PDFs (requiere imports)
+### No Ideal Para:
+- Solo tracker minimalista (este es completo)
+- Business accounting (esto es personal finance)
+- Solo 1 cuenta bancaria bien trackeada (overkill)
 
 ---
 
@@ -805,70 +701,56 @@ October 2025 Summary:
 ## 🔐 Privacy & Security
 
 ### Local-First
-- Single-user mode: Data NEVER leaves your machine
-- Multi-user mode (optional): Server on your network
-- Mobile sync (optional): Encrypted communication
+- Single-user mode: Data NUNCA sale de tu máquina
+- Multi-user mode opcional: Server en tu red local
+- Mobile sync opcional: Encrypted communication
 
 ### Encryption
-- Database encryption: AES-256 (optional)
+- Database encryption: AES-256 (opcional)
 - Backups encrypted
-- Export files can be password-protected
+- Export files password-protected (opcional)
 
 ### GDPR Compliance
-- Export all your data (JSON)
-- Delete all your data (one click)
+- Export all data (JSON)
+- Delete all data (one click)
 - No tracking, no analytics (by default)
-
----
-
-## 📖 Documentation
-
-**User Guides**:
-- Getting Started
-- Importing Your First PDF
-- Understanding the Timeline
-- Creating Budgets
-- Generating Reports
-
-**Developer Docs**:
-- Architecture Overview
-- Database Schema
-- Parser Configuration Guide
-- API Documentation (for multi-user)
-- Extension Guide (custom parsers)
-
-**Operations**:
-- Backup & Restore
-- Performance Tuning
-- Troubleshooting
-- Data Migration
 
 ---
 
 ## ✅ TL;DR - What Is Finance App?
 
-**Finance App es un sistema COMPLETO de finanzas personales que**:
+### Descripción Breve
 
-1. ✅ Soporta múltiples bancos y cuentas
-2. ✅ Procesa PDFs automáticamente (config-driven parsers)
-3. ✅ Muestra todo en un timeline unificado
-4. ✅ Categoriza automáticamente (pero editable)
-5. ✅ Te ayuda a crear y trackear budgets
-6. ✅ Detecta subscriptions recurrentes
-7. ✅ Linkea transfers entre cuentas
-8. ✅ Genera reports y analytics
-9. ✅ Exporta a CSV, PDF, JSON
-10. ✅ Funciona offline (local-first)
-11. ✅ Sincroniza con mobile (opcional)
-12. ✅ Multi-user support (opcional)
-13. ✅ Privacy total (encrypted, local)
-14. ✅ Extensible sin código (config-driven)
-15. ✅ Rápido (100k+ transactions)
+Sistema completo de finanzas personales que automatiza PDF processing, categorización, budgets, y reportes.
 
-**NO es "Phase 1 MVP"** - Es el sistema COMPLETO, descrito como una unidad.
+### Capacidades Principales
 
-**Construcción incremental** se documenta SEPARADO en [ROADMAP.md](ROADMAP.md).
+1. Multi-banco: Unlimited cuentas, config-driven parsers
+2. Multi-currency: USD, MXN, EUR, GBP simultáneamente
+3. Auto-parse PDFs: Drag & drop → 5 seg → Timeline updated
+4. Auto-categoriza: Aprende del usuario
+5. Budget tracking: Real-time, alertas configurables
+6. Transfer linking: Detecta automáticamente
+7. Recurring detection: Identifica subscriptions
+8. Reports: 6 pre-built + custom builder
+9. Local-first: SQLite, privacy total
+10. Extensible: Config YAML, no código
+11. Scale: 100k+ transacciones, <500ms loads
+12. Responsive Web: Mobile browser access (Phase 4)
+13. Multi-user: Opcional, data isolation
+14. Export: CSV, PDF, JSON
+15. Offline: Full funcionalidad sin internet
+
+### Sistema vs Construcción
+
+**Este documento**: Describe sistema COMPLETO (QUÉ hace)
+
+**ROADMAP.md**: Describe construcción INCREMENTAL (CÓMO construir)
+
+La app final tiene TODO. Pero se CONSTRUYE fase por fase (Phase 1 → 2 → 3 → 4).
 
 ---
 
-**Próximo doc**: [ROADMAP.md](ROADMAP.md) (cómo construir esto incremental)
+**Próximo doc**: [ROADMAP.md](ROADMAP.md) - CÓMO construir esto en 67 días, paso por paso
+
+**Ready to build?**: Empieza con [Task 1️⃣: Database Schema](ROADMAP.md#1-database-schema)

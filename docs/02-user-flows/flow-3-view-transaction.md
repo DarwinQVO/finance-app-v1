@@ -2,11 +2,11 @@
 
 **Cómo funciona el panel de detalles de una transacción**
 
-## Story: Darwin ve los detalles
+## Story: el usuario ve los detalles
 
 ### Escena 1: Timeline normal
 
-Darwin está viendo su timeline:
+el usuario está viendo su timeline:
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -57,7 +57,7 @@ Un panel slide desde la derecha:
 └────────────────────────┴─────────────────────────┘
 ```
 
-Darwin puede ver:
+el usuario puede ver:
 - **Merchant normalizado**: "Starbucks"
 - **Merchant original**: "STARBUCKS STORE #12345"
 - **Source PDF**: De dónde vino
@@ -264,13 +264,13 @@ El confidence score indica qué tan seguro está el pipeline de la normalizació
 ⚠️ String muy diferente a otros
 ```
 
-**Uso futuro**: Darwin puede filtrar por confidence para revisar transacciones dudosas.
+**Uso futuro**: el usuario puede filtrar por confidence para revisar transacciones dudosas.
 
 ---
 
 ## Delete transaction
 
-Darwin hace click en "Delete" en el panel.
+el usuario hace click en "Delete" en el panel.
 
 ### Confirmación
 ```

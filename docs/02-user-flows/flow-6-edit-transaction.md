@@ -1,28 +1,27 @@
 # Flow 6: Edit Transaction
 
-**Cómo Darwin puede corregir transacciones mal normalizadas**
+**Cómo el usuario puede corregir transacciones mal normalizadas**
 
 ---
 
-## El problema
+## Funcionalidad
 
-A veces el pipeline normaliza mal:
+Permite editar transacciones para corregir normalizaciones incorrectas.
 
+**Casos típicos**:
 ```
-❌ "TRADER JOES #123" → "Trader" (debería ser "Trader Joe's")
-❌ "SALARY DEPOSIT" → tipo "expense" (debería ser "income")
-❌ "TRANSFER TO WISE" → no linkeado correctamente
+"TRADER JOES #123" → corregir a "Trader Joe's"
+"SALARY DEPOSIT" → cambiar tipo de expense a income
+"TRANSFER TO WISE" → re-linkear correctamente
 ```
-
-**Solución**: Permitir editar transacciones manualmente.
 
 ---
 
-## Story: Darwin corrige un merchant
+## Story: el usuario corrige un merchant
 
-### Escena 1: Darwin ve un merchant mal normalizado
+### Escena 1: el usuario ve un merchant mal normalizado
 
-Darwin está viendo su timeline:
+el usuario está viendo su timeline:
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -32,7 +31,7 @@ Darwin está viendo su timeline:
 └──────────────────────────────────────────────────┘
 ```
 
-Darwin hace **click** en "Trader" para ver detalles.
+el usuario hace **click** en "Trader" para ver detalles.
 
 ---
 
@@ -58,7 +57,7 @@ Darwin hace **click** en "Trader" para ver detalles.
 └────────────────────────┴─────────────────────────┘
 ```
 
-Darwin hace **click en "Edit"**.
+el usuario hace **click en "Edit"**.
 
 ---
 
@@ -101,7 +100,7 @@ El panel cambia a modo edición:
 └─────────────────────────────────────────┘
 ```
 
-Darwin cambia:
+el usuario cambia:
 - Merchant: "Trader" → "Trader Joe's"
 - Hace click en **"Save Changes"**
 
@@ -457,7 +456,7 @@ function TimelineRow({ transaction }) {
 
 ## Re-upload Behavior
 
-**Pregunta**: Si Darwin edita una transaction y luego re-sube el mismo PDF, ¿qué pasa?
+**Pregunta**: Si el usuario edita una transaction y luego re-sube el mismo PDF, ¿qué pasa?
 
 **Respuesta**: **Preserve edits** (no overwrite).
 

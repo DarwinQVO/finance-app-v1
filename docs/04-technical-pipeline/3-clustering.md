@@ -43,22 +43,27 @@ interface ClusteringOutput {
 
 ---
 
-## El problema
+## Funcionalidad
 
-Los PDFs tienen el mismo merchant con muchas variaciones:
+Agrupa merchant strings con variaciones usando string similarity.
 
+**Casos típicos**:
 ```
+Input:
 STARBUCKS STORE #12345 SANTA MONICA CA
 STARBUCKS STORE #67890 LOS ANGELES CA
 STARBUCKS #11111
 STARBUCKS STORE #22222 NEW YORK NY
+
+Output:
+Cluster cluster_abc123 → "Starbucks" (4 transacciones agrupadas)
 ```
 
-**Son 4 strings diferentes**, pero claramente son el mismo merchant: **Starbucks**.
+**Algoritmo**: Levenshtein distance con threshold configurable (default: 0.8)
 
 ---
 
-## La solución: Clustering
+## Implementación: Clustering
 
 Agrupar strings similares en **clusters**.
 
@@ -162,34 +167,32 @@ const result = await clusterMerchants(transactions, {
 const result = await clusterMerchants(transactions);  // Uses 0.8
 ```
 
-**¿Por qué 0.8 es el default?**
+**Threshold selection**:
 
-### Threshold muy bajo (0.5)
+### Threshold 0.5 (bajo)
 
-**Problema**: Agrupa merchants diferentes.
-
+Agrupa merchants diferentes:
 ```
-"STARBUCKS STORE #123" similarity con "STAR MARKET" = 0.65
-→ Agrupados en mismo cluster ✗
-```
-
-### Threshold muy alto (0.95)
-
-**Problema**: NO agrupa merchants iguales.
-
-```
-"STARBUCKS STORE #12345" similarity con "STARBUCKS #11111" = 0.82
-→ Clusters separados ✗
+"STARBUCKS STORE #123" similarity "STAR MARKET" = 0.65
+→ Agrupados en mismo cluster (incorrecto)
 ```
 
-### Threshold óptimo: 0.8
+### Threshold 0.95 (alto)
+
+No agrupa merchants iguales:
+```
+"STARBUCKS STORE #12345" similarity "STARBUCKS #11111" = 0.82
+→ Clusters separados (incorrecto)
+```
+
+### Threshold 0.8 (óptimo)
 
 ```
-"STARBUCKS STORE #12345" similarity con "STARBUCKS STORE #67890" = 0.89 ✓
-"STARBUCKS STORE #12345" similarity con "STAR MARKET" = 0.65 ✗
+"STARBUCKS STORE #12345" similarity "STARBUCKS STORE #67890" = 0.89 ✓
+"STARBUCKS STORE #12345" similarity "STAR MARKET" = 0.65 ✗
 ```
 
-**Balance perfecto**.
+Balance correcto entre precisión y recall.
 
 ---
 

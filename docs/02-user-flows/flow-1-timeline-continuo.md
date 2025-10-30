@@ -2,31 +2,22 @@
 
 **El flujo más importante de Finance App**
 
-## El problema que resuelve
+## Funcionalidad
 
-En apps tradicionales hay dos modos separados:
-- **Modo setup**: Cargas todo el histórico (tedioso, diferente UX)
-- **Modo diario**: Usas la app normalmente
+Timeline continuo que muestra todas las transacciones cronológicamente.
 
-**Resultado**: Fricción. El usuario siente que hay un "antes" y un "después".
-
-## La solución: Timeline Continuo
-
-**No hay separación**. Subes PDFs y aparecen en el timeline. Siempre. Para todo.
-
-- ¿Primero? Subes 96 PDFs de 2 años. Van apareciendo.
-- ¿Mañana? Subes el PDF de este mes. Aparece igual.
-- ¿En 6 meses? Sigues subiendo. Mismo flujo.
-
-**UN solo flujo. UN solo UX. UN timeline.**
+**Características**:
+- Sin separación entre "setup" y "uso diario"
+- Mismo flujo para subir primer PDF o PDF #100
+- Vista unificada de todas las cuentas
 
 ---
 
-## Story: Darwin usa la app por primera vez
+## Story: el usuario usa la app por primera vez
 
 ### Acto 1: El día 1
 
-Darwin acaba de instalar Finance App. Abre la app.
+el usuario acaba de instalar Finance App. Abre la app.
 
 **Ve esto**:
 ```
@@ -45,7 +36,7 @@ Darwin acaba de instalar Finance App. Abre la app.
 
 Simple. Directo. NO dice "Modo setup" ni "Carga histórico". Solo dice: "Arrastra PDF".
 
-Darwin tiene 96 PDFs de 2 años. Empieza con el más reciente: `bofa_2025_09.pdf`
+el usuario tiene 96 PDFs de 2 años. Empieza con el más reciente: `bofa_2025_09.pdf`
 
 **Arrastra el PDF** → Lo suelta en la zona.
 
@@ -71,7 +62,7 @@ Darwin tiene 96 PDFs de 2 años. Empieza con el más reciente: `bofa_2025_09.pdf
 
 ### Acto 2: Carga el histórico
 
-Darwin está contento. Ahora quiere cargar más PDFs.
+el usuario está contento. Ahora quiere cargar más PDFs.
 
 **NO cambia nada en la UI**. Sigue siendo la misma app. Mismo botón "Upload".
 
@@ -92,7 +83,7 @@ Arrastra 10 PDFs juntos (todos de BofA, de Jan-Sep 2025).
 
 **30 segundos después**, el timeline tiene ~1,000 transacciones más.
 
-Darwin cambia el filtro de fecha a "Todo 2025" y ve:
+el usuario cambia el filtro de fecha a "Todo 2025" y ve:
 ```
 ┌─────────────────────────────────────────────────┐
 │  Filtros: [BofA] [2025]                         │
@@ -113,7 +104,7 @@ Darwin cambia el filtro de fecha a "Todo 2025" y ve:
 
 ### Acto 3: Sigue cargando
 
-Darwin está motivado. Ahora carga Apple Card (12 PDFs), Wise (24 PDFs), Scotia (48 PDFs).
+el usuario está motivado. Ahora carga Apple Card (12 PDFs), Wise (24 PDFs), Scotia (48 PDFs).
 
 **Mismo flujo**:
 1. Arrastra PDFs
@@ -122,7 +113,7 @@ Darwin está motivado. Ahora carga Apple Card (12 PDFs), Wise (24 PDFs), Scotia 
 
 **NO hay "Terminar setup"**. NO hay "Ahora entra al modo diario". Nada.
 
-Después de 2 horas, Darwin tiene:
+Después de 2 horas, el usuario tiene:
 - 96 PDFs procesados ✓
 - ~12,000 transacciones ✓
 - 4 cuentas ✓
@@ -134,7 +125,7 @@ Y la app se ve EXACTAMENTE igual que cuando empezó.
 
 ### Acto 4: Un mes después
 
-Es octubre 2025. Darwin recibe los statements del mes pasado.
+Es octubre 2025. el usuario recibe los statements del mes pasado.
 
 **Abre la app**. Ve su timeline normal.
 
@@ -142,7 +133,7 @@ Es octubre 2025. Darwin recibe los statements del mes pasado.
 
 **10 segundos después**: ~400 transacciones nuevas aparecen en el timeline.
 
-**Darwin ni siquiera piensa "estoy usando modo diario"**. Simplemente subió PDFs como siempre.
+**el usuario ni siquiera piensa "estoy usando modo diario"**. Simplemente subió PDFs como siempre.
 
 ---
 
@@ -152,7 +143,7 @@ Es octubre 2025. Darwin recibe los statements del mes pasado.
 No importa si subes 1 PDF o 100. El botón es el mismo. La UX es la misma.
 
 ### 2. El pipeline es invisible
-Darwin no ve "clustering" ni "normalización". Solo ve: PDF → transacciones limpias.
+el usuario no ve "clustering" ni "normalización". Solo ve: PDF → transacciones limpias.
 
 ### 3. El timeline es acumulativo
 Cada upload agrega al timeline. No reemplaza. No resetea. Solo crece.
@@ -230,7 +221,7 @@ async function uploadPDF(pdfPath, accountId) {
 }
 ```
 
-**Resultado**: Darwin puede subir el mismo PDF 100 veces. Solo se procesa 1 vez.
+**Resultado**: el usuario puede subir el mismo PDF 100 veces. Solo se procesa 1 vez.
 
 ---
 
@@ -238,7 +229,7 @@ async function uploadPDF(pdfPath, accountId) {
 
 **No importa**. El timeline siempre se ordena por `date`, no por orden de upload.
 
-Darwin puede:
+el usuario puede:
 1. Subir Sep 2025
 2. Subir Jan 2024
 3. Subir Jun 2025

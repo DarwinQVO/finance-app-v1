@@ -6,7 +6,7 @@
 
 Wise es un banco digital internacional. Sus statements son limpios pero tienen **multi-currency**.
 
-Darwin usa Wise para:
+el usuario usa Wise para:
 - Transfers internacionales (USD → EUR, USD → MXN)
 - Pagos en diferentes monedas
 - Recibir pagos de clientes internacionales
@@ -19,7 +19,7 @@ Darwin usa Wise para:
 ```
 Your statement for September 2025
 
-Account holder: Darwin Borges
+Account holder: el usuario Borges
 Account balance: $1,234.56 USD
 
 Transactions
@@ -264,7 +264,7 @@ function classifyTypeWise(description) {
 
 ### Challenge: Currency exchanges
 
-Cuando Darwin convierte USD a EUR, Wise crea **2 transacciones**:
+Cuando el usuario convierte USD a EUR, Wise crea **2 transacciones**:
 
 ```
 Sep 26  Currency exchange: USD → EUR    -$500.00 USD

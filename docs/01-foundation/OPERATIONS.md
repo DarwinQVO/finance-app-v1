@@ -957,7 +957,7 @@ transacciones_esperadas ≈ transacciones_actuales (±tolerance)
 
 **Ejemplo concreto**:
 ```
-Darwin típicamente tiene:
+el usuario típicamente tiene:
 - BofA:       40-50 transacciones/mes
 - Apple Card: 30-40 transacciones/mes
 - Wise:       10-15 transacciones/mes

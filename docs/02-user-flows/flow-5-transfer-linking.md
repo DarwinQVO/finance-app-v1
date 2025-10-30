@@ -2,27 +2,25 @@
 
 **Cómo detectamos cuando mueves plata entre cuentas**
 
-## El problema
+## Funcionalidad
 
-Darwin mueve $1,000 de BofA a Wise. Esto crea **2 transacciones separadas**:
+Detecta y linkea transfers entre cuentas propias.
 
+**Caso típico**:
 ```
 BofA statement:
-Sep 26  TRANSFER TO WISE    -$1,000.00 USD
+  Sep 26  TRANSFER TO WISE    -$1,000.00 USD
 
 Wise statement:
-Sep 27  TRANSFER FROM BANK  +$1,000.00 USD
+  Sep 27  TRANSFER FROM BANK  +$1,000.00 USD
 ```
 
-Sin linking, parecen 2 transacciones independientes:
-- Gasto de $1,000 (BofA)
-- Ingreso de $1,000 (Wise)
-
-**Problema**: El balance total parece correcto, pero es confuso. No es gasto ni ingreso, es un **transfer**.
+Sin linking: 2 transacciones independientes (gasto + ingreso)
+Con linking: 1 transfer (movimiento interno, net = $0)
 
 ---
 
-## La solución: Transfer linking
+## Implementación: Transfer linking
 
 Detectar automáticamente que estas 2 transacciones son la misma operación.
 
@@ -37,18 +35,18 @@ Ahora es claro: moviste plata entre cuentas, no gastaste ni ganaste.
 
 ---
 
-## Story: Darwin mueve plata de BofA a Wise
+## Story: el usuario mueve plata de BofA a Wise
 
 ### Escena 1: La transferencia real
 
-Darwin necesita pagar algo en EUR (Europa). Mueve $1,000 de BofA a Wise.
+el usuario necesita pagar algo en EUR (Europa). Mueve $1,000 de BofA a Wise.
 
 **26 de septiembre**: Hace transfer desde BofA app → Wise.
 **27 de septiembre**: Wise recibe el dinero (1 día después).
 
 ### Escena 2: Sube los PDFs
 
-Darwin sube `bofa_2025_09.pdf` y `wise_2025_09.pdf`.
+el usuario sube `bofa_2025_09.pdf` y `wise_2025_09.pdf`.
 
 **Pipeline procesa ambos PDFs**:
 
@@ -93,7 +91,7 @@ UPDATE transactions SET transfer_pair_id = 'txn_wise_001' WHERE id = 'txn_bofa_0
 UPDATE transactions SET transfer_pair_id = 'txn_bofa_001' WHERE id = 'txn_wise_001';
 ```
 
-### Escena 4: Darwin ve el timeline
+### Escena 4: el usuario ve el timeline
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -287,7 +285,7 @@ txn1.type === 'transfer' && txn2.type === 'transfer' ✓
 
 ### Edge case 1: Mismo monto, mismo día, 2 pares
 
-**Escenario**: Darwin hace 2 transfers de $500 el mismo día.
+**Escenario**: el usuario hace 2 transfers de $500 el mismo día.
 
 ```
 Sep 26  BofA → Wise    -$500  (txn_1)
@@ -325,7 +323,7 @@ Oct 2   Foreign bank receipt  +$1,000  (6 días después)
 
 **Problema**: |Sep 26 - Oct 2| = 6 días > 3 días → no match.
 
-**Solución**: Darwin puede linkear manualmente (future feature).
+**Solución**: el usuario puede linkear manualmente (future feature).
 
 **Solución inicial**: Aumentar ventana a 5 días para international banks.
 
@@ -466,7 +464,7 @@ function findTransferPairCrossCurrency(txn) {
 
 ## UI: Transfer details
 
-Darwin hace click en un transfer.
+el usuario hace click en un transfer.
 
 ```
 ┌─────────────────────────────────────────┐
@@ -504,7 +502,7 @@ Darwin hace click en un transfer.
 
 ## Manual linking (future feature)
 
-**Caso**: El auto-linking falló. Darwin quiere linkear manualmente.
+**Caso**: El auto-linking falló. el usuario quiere linkear manualmente.
 
 ### UI: Select 2 transactions → "Link as transfer"
 
@@ -550,7 +548,7 @@ Darwin hace click en un transfer.
 
 ## Testing transfer linking
 
-Darwin puede ver todos los transfers.
+el usuario puede ver todos los transfers.
 
 ### UI: Filter by type
 

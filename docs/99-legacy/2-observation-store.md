@@ -162,7 +162,7 @@ function insertObservation(obs) {
 
 ## Deduplicación por hash
 
-**Problema**: Darwin arrastra el mismo PDF 2 veces.
+**Problema**: el usuario arrastra el mismo PDF 2 veces.
 
 **Solución**: Hash SHA256 del archivo.
 

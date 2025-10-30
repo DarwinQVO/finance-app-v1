@@ -4,9 +4,9 @@
 
 ## Overview
 
-Scotiabank es el banco mexicano de Darwin. Statements en **MXN** (pesos mexicanos) y en **español**.
+Scotiabank es el banco mexicano de el usuario. Statements en **MXN** (pesos mexicanos) y en **español**.
 
-Darwin usa Scotia para:
+el usuario usa Scotia para:
 - Gastos locales en México
 - Pagos a proveedores mexicanos
 - Recibir transfers desde Wise
@@ -21,7 +21,7 @@ Scotiabank
 Estado de Cuenta
 Septiembre 2025
 
-Titular: Darwin Borges
+Titular: el usuario Borges
 Cuenta: ****5678
 
 Resumen de Cuenta

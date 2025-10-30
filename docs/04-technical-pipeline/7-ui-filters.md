@@ -4,7 +4,7 @@
 
 ## Overview
 
-Los filtros permiten a Darwin buscar transactions específicas.
+Los filtros permiten a el usuario buscar transactions específicas.
 
 ```
 ┌──────────────────────────────────────────────────┐

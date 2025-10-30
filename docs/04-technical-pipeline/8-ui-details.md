@@ -4,7 +4,7 @@
 
 ## Overview
 
-Cuando Darwin hace click en una transacción, aparece un panel desde la derecha con todos los detalles.
+Cuando el usuario hace click en una transacción, aparece un panel desde la derecha con todos los detalles.
 
 ```
 ┌──────────────┬────────────────────────┐

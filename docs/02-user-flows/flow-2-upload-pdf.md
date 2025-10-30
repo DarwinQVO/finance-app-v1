@@ -10,11 +10,11 @@ El usuario arrastra un PDF → La app lo procesa → Aparecen transacciones en e
 
 ---
 
-## Story: Darwin sube su primer PDF
+## Story: el usuario sube su primer PDF
 
 ### Paso 1: La zona de drop
 
-Darwin abre Finance App. Ve la zona de upload:
+el usuario abre Finance App. Ve la zona de upload:
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -27,7 +27,7 @@ Darwin abre Finance App. Ve la zona de upload:
 └──────────────────────────────────────────────────┘
 ```
 
-Darwin tiene `bofa_2025_09.pdf` en su Downloads. Lo arrastra.
+el usuario tiene `bofa_2025_09.pdf` en su Downloads. Lo arrastra.
 
 ---
 
@@ -46,7 +46,7 @@ Darwin tiene `bofa_2025_09.pdf` en su Downloads. Lo arrastra.
 └──────────────────────────────────────────────────┘
 ```
 
-Darwin suelta el archivo.
+el usuario suelta el archivo.
 
 ---
 
@@ -86,7 +86,7 @@ Darwin suelta el archivo.
 └──────────────────────────────────────────────────┘
 ```
 
-Darwin hace click en "Ver timeline" y ¡boom! Ve las 127 transacciones.
+el usuario hace click en "Ver timeline" y ¡boom! Ve las 127 transacciones.
 
 ---
 
@@ -276,7 +276,7 @@ function detectAccount(pdfPath) {
 
 ## Upload múltiple
 
-Darwin puede arrastrar **varios PDFs a la vez**.
+el usuario puede arrastrar **varios PDFs a la vez**.
 
 ### UI con múltiples archivos
 
@@ -339,7 +339,7 @@ async function uploadMultiple(filePaths) {
 
 ## Deduplicación
 
-**Problema**: Darwin arrastra el mismo PDF dos veces por error.
+**Problema**: el usuario arrastra el mismo PDF dos veces por error.
 
 **Solución**: Hash del archivo.
 
@@ -381,12 +381,12 @@ function isDuplicate(hash) {
 
 ### Scenario: User edita transaction y luego re-sube PDF
 
-**Caso común**: Darwin edita un merchant mal normalizado y luego por error re-sube el mismo PDF.
+**Caso común**: el usuario edita un merchant mal normalizado y luego por error re-sube el mismo PDF.
 
 #### Step 1: User edita transaction
 
 ```
-Sep 28  Trader  -$45.67  USD  →  Darwin edita → "Trader Joe's"
+Sep 28  Trader  -$45.67  USD  →  el usuario edita → "Trader Joe's"
 ```
 
 Database:
@@ -404,7 +404,7 @@ WHERE id = 'txn_abc123';
 
 #### Step 2: User re-sube `bofa_2025_09.pdf`
 
-Darwin accidentalmente arrastra el mismo PDF de nuevo.
+el usuario accidentalmente arrastra el mismo PDF de nuevo.
 
 **Sistema detecta**:
 1. PDF hash = mismo hash

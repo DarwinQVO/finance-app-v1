@@ -14,6 +14,98 @@
 
 ---
 
+## 💡 Decisiones Arquitectónicas
+
+### Arquitectura Elegida
+
+**1 tabla core + auxiliares cuando necesario**:
+- Tabla `transactions` contiene todos los campos relevantes
+- Una transacción = un row
+- Queries simples, performance eficiente
+
+**Config-driven parsers**:
+- Parsers definidos en tabla `parser_configs`
+- Agregar banco = INSERT config, no código
+- Extensible por el usuario
+
+**Features modulares**:
+- Categories, budgets, multi-user = tablas independientes
+- Cada feature se agrega sin modificar core
+- Phase 1 funciona standalone
+
+### Beneficios de la Arquitectura
+
+**Simplicidad**:
+- Menos abstracciones, menos bugs
+- Una fuente de verdad, no inconsistencias
+- Código mantenible
+
+**Extensibilidad**:
+- Usuario puede agregar bancos sin esperar developers
+- Config-driven, no hardcoded
+- Customización completa
+
+**Escalabilidad**:
+- Phase 1 funciona standalone
+- Phases 2-4 agregan features sin refactor
+- Modular y testeable
+
+### Database Architecture
+
+**Single-table approach**:
+
+```
+Upload PDF
+    ↓
+┌─────────────────────────────────────────┐
+│          transactions                   │
+│  ┌─────────────────────────────────┐   │
+│  │ • raw (original_description)    │   │
+│  │ • normalized (merchant)         │   │
+│  │ • enriched (category_id)        │   │
+│  │ • reconciled (is_duplicate)     │   │
+│  │ • metadata (source_*, edited_*) │   │
+│  └─────────────────────────────────┘   │
+│                                         │
+│  Todo en UN lugar                       │
+│  Todo en UN row                         │
+│  Todo en UNA query                      │
+└─────────────────────────────────────────┘
+         ↓ (FKs simples)
+┌─────────────┬──────────────┬─────────────┐
+│  accounts   │  categories  │   budgets   │
+│  (metadata) │  (optional)  │  (optional) │
+└─────────────┴──────────────┴─────────────┘
+
+Características:
+  - 1 tabla core
+  - Simple queries (0-1 JOINs)
+  - Fast performance
+  - No inconsistencias
+```
+
+### Extensibilidad Config-Driven
+
+**Agregar nuevo banco**:
+
+```sql
+INSERT INTO parser_configs (
+  id, name, detection_keywords, field_config
+) VALUES (
+  'scotiabank_mx',
+  'Scotiabank México',
+  '["Scotiabank", "México"]',
+  '{"date": {"regex": "..."}, ...}'
+);
+```
+
+**Resultado**:
+- Tiempo: ~5 minutos
+- Código: 0 LOC
+- Funciona inmediatamente
+
+---
+
 ## 📊 Database Schema
 
 ### **1 tabla CORE + tablas auxiliares por feature**
@@ -266,6 +358,44 @@ CREATE TABLE recurring_groups (
   updated_at TEXT NOT NULL
 );
 ```
+
+---
+
+#### `balance_checks` (Phase 3 - Validación)
+
+**Validación opcional de balances**
+
+```sql
+CREATE TABLE balance_checks (
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  check_date TEXT NOT NULL,        -- Fecha del check
+
+  -- Balances
+  expected_balance REAL NOT NULL,  -- User ingresa esto
+  calculated_balance REAL NOT NULL,-- Sistema calcula
+  difference REAL NOT NULL,        -- expected - calculated
+
+  -- Status
+  status TEXT CHECK(status IN ('ok', 'warning', 'error')),
+  notes TEXT,                      -- User puede agregar notas
+
+  -- Timestamps
+  created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+  resolved_at TEXT,                -- Cuando se resuelve la discrepancia
+
+  FOREIGN KEY (account_id) REFERENCES accounts(id)
+);
+
+CREATE INDEX idx_balance_checks_account ON balance_checks(account_id);
+CREATE INDEX idx_balance_checks_date ON balance_checks(check_date);
+```
+
+**Uso**:
+- User ingresa balance esperado (del statement bancario)
+- Sistema calcula balance sumando transactions
+- Muestra diferencia si no cuadra
+- Ayuda a detectar transacciones faltantes o errores
 
 ---
 

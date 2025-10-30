@@ -2,25 +2,24 @@
 
 **Cómo "STARBUCKS STORE #12345" se convierte en "Starbucks"**
 
-## El problema
+## Funcionalidad
 
-Los PDFs bancarios tienen merchants FEOS:
+Normaliza merchant names de PDFs bancarios.
 
+**Ejemplo**:
 ```
-STARBUCKS STORE #12345 SANTA MONICA CA
-STARBUCKS STORE #67890 LOS ANGELES CA
-STARBUCKS #11111
-AMAZON.COM*M89JF2K3 AMZN.COM/BILL WA
-AMAZON.COM*K12HS8PQ AMZN.COM/BILL WA
-UBER *TRIP HLP.UBER.COM CA
-UBER *EATS HLP.UBER.COM CA
-```
+Input:
+  STARBUCKS STORE #12345 SANTA MONICA CA
+  STARBUCKS STORE #67890 LOS ANGELES CA
+  STARBUCKS #11111
 
-**Resultado**: 7 merchants diferentes cuando debería ser 3 (Starbucks, Amazon, Uber).
+Output:
+  Starbucks (3 transacciones agrupadas)
+```
 
 ---
 
-## La solución: 2-step normalization
+## Implementación: 2-step normalization
 
 ### Step 1: Clustering
 Agrupar strings similares.
@@ -51,11 +50,11 @@ UBER *TRIP HLP.UBER.COM → Uber
 
 ---
 
-## Story: Darwin sube PDFs y ve normalización automática
+## Story: el usuario sube PDFs y ve normalización automática
 
 ### Escena 1: PDF raw
 
-Darwin sube `bofa_2025_09.pdf`. El PDF tiene esto:
+el usuario sube `bofa_2025_09.pdf`. El PDF tiene esto:
 
 ```
 Sep 28  STARBUCKS STORE #12345 SANTA MONICA CA    -5.67
@@ -96,7 +95,7 @@ WHERE original_description LIKE '%STARBUCKS%';
 
 ### Escena 3: Timeline limpio
 
-Darwin ve esto:
+el usuario ve esto:
 ```
 ┌──────────────────────────────────────────────────┐
 │  Sep 28  Starbucks              -$5.67  USD     │
@@ -285,7 +284,7 @@ async function normalizeTransactions({ transactions, clusterMap, config }) {
 
 **Add rule WITHOUT code change**:
 ```sql
--- Darwin adds new rule via SQL or UI
+-- el usuario adds new rule via SQL or UI
 INSERT INTO normalization_rules (pattern, normalized_merchant, priority, is_active)
 VALUES ('WHOLE\s*FOODS.*#?\d+', 'Whole Foods', 100, TRUE);
 
@@ -410,7 +409,7 @@ function calculateConfidence(txn, normalizedMerchant, matchedRuleId, clusterId) 
 
 **Current State**: DB-driven LEGO architecture (✅ already implemented).
 
-Darwin puede agregar reglas de 2 formas:
+el usuario puede agregar reglas de 2 formas:
 
 ### Method 1: SQL Insert
 ```sql
@@ -447,7 +446,7 @@ INSERT INTO normalization_rules (
 
 ## Testing normalization
 
-Darwin puede ver qué cluster tiene cada merchant.
+el usuario puede ver qué cluster tiene cada merchant.
 
 ### UI: "View cluster"
 
@@ -485,7 +484,7 @@ En el panel de detalles:
 └─────────────────────────────────────────┘
 ```
 
-**Uso**: Darwin puede verificar que el clustering es correcto.
+**Uso**: el usuario puede verificar que el clustering es correcto.
 
 ---
 
@@ -576,7 +575,7 @@ for each observation {
 
 ## Regenerar Normalización
 
-Si Darwin cambia las reglas, puede re-correr el pipeline para actualizar los merchants.
+Si el usuario cambia las reglas, puede re-correr el pipeline para actualizar los merchants.
 
 ```javascript
 async function regenerateNormalization() {
@@ -615,7 +614,7 @@ async function regenerateNormalization() {
 
 **Tiempo**: ~5 segundos for 12k transactions.
 
-**Uso**: Darwin adds rule → re-runs pipeline → sees updated merchants.
+**Uso**: el usuario adds rule → re-runs pipeline → sees updated merchants.
 
 ---
 

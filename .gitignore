@@ -1,7 +1,35 @@
+# ==========================================
+# FINANCE APP - GitHub Repository Config
+# Solo documentación (docs/) debe estar en repo
+# ==========================================
+
+# Root files (NO queremos estos en GitHub)
+/README.md
+/CHANGELOG.md
+*.html
+*.sh
+/BUILD_*.md
+/COMPLETE_*.md
+/FLOW_*.md
+/UI_*.md
+/VALIDATION_*.md
+
+# Source code (solo documentación en repo)
+/src/
+/app/
+/lib/
+
+# Claude/AI config files
+.claude.json
+.claude/
+.gitmessage
+.cursor/
+.continue/
+
 # Dependencies
 node_modules/
 package-lock.json
-pnpm-lock.yaml
+pnpm-lock.json
 yarn.lock
 
 # Build outputs

@@ -21,7 +21,7 @@
 **Tu Misión:**
 Crear documentación completa (specs, batches, flows, storytelling) para **Finance App V1**:
 - ✅ **Simple**: Hardcoded OK, ~1800 LOC, SQLite
-- ✅ **Completa**: Todas las features que Darwin necesita día a día + pipeline completo
+- ✅ **Completa**: Todas las features que el usuario necesita día a día + pipeline completo
 - ✅ **Timeline Continuo**: Cargar 2 años históricos + continuar con nuevos statements (UN SOLO FLUJO)
 - ✅ **Truth Construction**: Pipeline automático (Upload → Parse → Observe → Cluster → Normalize → Canonical)
 
@@ -31,7 +31,7 @@ Crear documentación completa (specs, batches, flows, storytelling) para **Finan
 - 10 batch documents (foundation → pipeline → UI)
 - 5 user flows (timeline continuo)
 - 4 parser specs (BofA, Apple, Wise, Scotia)
-- 1 storytelling completo (Darwin usando el app)
+- 1 storytelling completo (el usuario usando el app)
 - Technical specs (pipeline, clustering, normalization, transfers, currency)
 
 ---
@@ -52,7 +52,7 @@ Ese approach era **"diseñar abstracciones primero, luego app"**.
 **"Construir app simple primero, luego extraer abstracciones"**.
 
 ### **Qué Puedes Usar del Trabajo Anterior**
-✅ **User journeys** - Qué necesita Darwin (sigue siendo válido)
+✅ **User journeys** - Qué necesita el usuario (sigue siendo válido)
 ✅ **Edge cases** - Casos reales que el app debe manejar
 ✅ **Domain knowledge** - Cómo funcionan bancos, statements, transfers
 ❌ **Abstracciones prediseñadas** - NO usar primitivos/systems ya diseñados
@@ -70,7 +70,7 @@ Ese approach era **"diseñar abstracciones primero, luego app"**.
 
 **Ejemplo Concreto:**
 ```
-Darwin puede hacer esto en CUALQUIER orden:
+el usuario puede hacer esto en CUALQUIER orden:
 
 Día 1: Sube BofA_Oct2024.pdf (este mes)
 Día 2: Sube BofA_Oct2022.pdf (hace 2 años)
@@ -102,7 +102,7 @@ Todo en el mismo timeline, misma vista, mismo flujo.
 - Funciones directas (no clases abstractas complejas)
 
 **Definición de "Completa":**
-- ✅ Soporta 4 bancos de Darwin (BofA, Apple Card, Wise, Scotia)
+- ✅ Soporta 4 bancos de el usuario (BofA, Apple Card, Wise, Scotia)
 - ✅ Soporta 2 currencies (USD, MXN)
 - ✅ Todas las features necesarias para uso diario:
   - Upload statements
@@ -116,7 +116,7 @@ Todo en el mismo timeline, misma vista, mismo flujo.
 
 **NO incluye (fuera de scope V1):**
 - ❌ API pública (solo web UI)
-- ❌ Multi-user (solo Darwin)
+- ❌ Multi-user (solo el usuario)
 - ❌ Real-time sync con bancos
 - ❌ Mobile app
 - ❌ ML/predictions
@@ -494,7 +494,7 @@ Total V1:                          ~1800 LOC
 
 ### **User Experience (Pipeline Hidden)**
 
-**Darwin sees:**
+**el usuario sees:**
 ```
 1. Upload BofA_Oct2024.pdf
 2. [2 seconds...]
@@ -507,7 +507,7 @@ Date         Merchant        Amount
 2024-10-30   Starbucks      -$5.50   ← Clean!
 ```
 
-**Behind the scenes (Darwin doesn't see):**
+**Behind the scenes (el usuario doesn't see):**
 ```
 Upload → Parse (48 raw) → ObservationStore
       → Cluster (15 groups) → Normalize (48 canonical)
@@ -518,7 +518,7 @@ Upload → Parse (48 raw) → ObservationStore
 
 ---
 
-## 👤 Darwin's Real Context
+## 👤 el usuario's Real Context
 
 ### **Perfil Personal**
 - **Ubicación**: USA/México (trabaja remotamente, vive en ambos lugares)
@@ -530,7 +530,7 @@ Upload → Parse (48 raw) → ObservationStore
 
 ### **Sistema de Cuentas (4 total)**
 
-Darwin tiene un sistema multi-país optimizado para minimizar fees de conversión:
+el usuario tiene un sistema multi-país optimizado para minimizar fees de conversión:
 
 ```python
 DARWIN_ACCOUNTS = [
@@ -654,7 +654,7 @@ BofA Checking ($5,000)
 
 ---
 
-### **Pain Points Darwin Quiere Resolver**
+### **Pain Points el usuario Quiere Resolver**
 
 **1. Visibilidad de Flujo:**
 - "¿A dónde va mi dinero realmente?"
@@ -683,20 +683,20 @@ BofA Checking ($5,000)
 ### **Por Qué V1 Necesita Estas Features**
 
 **Upload & Parse:**
-- Darwin tiene 96 PDFs acumulados (24 meses × 4 cuentas)
+- el usuario tiene 96 PDFs acumulados (24 meses × 4 cuentas)
 - Necesita cargar todos rápidamente (timeline continuo)
 
 **Normalization:**
-- Darwin ve "UBER *EATS" en BofA, "Uber Eats" en Apple Card
+- el usuario ve "UBER *EATS" en BofA, "Uber Eats" en Apple Card
 - Quiere entender: "¿Cuánto gasté en Uber total?"
 
 **Transfer Detection:**
-- Darwin mueve $500-1,000/mes entre cuentas
+- el usuario mueve $500-1,000/mes entre cuentas
 - Sin detección: aparecen como +$500 (income) y -$500 (expense) → infla totales
 - Con detección: se marcan como transfers → totales correctos
 
 **Currency Conversion:**
-- Darwin necesita ver: "Gasté $2,800 total (incluyendo MXN convertido)"
+- el usuario necesita ver: "Gasté $2,800 total (incluyendo MXN convertido)"
 - Scotia muestra "8,000 MXN" → convertir a "$400 USD" para dashboard
 
 **Dashboard:**
@@ -716,19 +716,19 @@ BofA Checking ($5,000)
 ### **Uso Típico**
 
 **Semana 1 (Carga inicial):**
-- Darwin sube 96 PDFs (todos sus statements de 2 años)
+- el usuario sube 96 PDFs (todos sus statements de 2 años)
 - ~12,000 transacciones cargadas
 - Normalization detecta ~200 merchants únicos
 - Transfer detection encuentra ~150 transfers
 
 **Semana 2-4 (Exploración):**
-- Darwin busca "Uber" → 150 matches (2022-2024)
+- el usuario busca "Uber" → 150 matches (2022-2024)
 - Filtra "Food & Dining" → 3,500 transacciones
 - Revisa dashboard → "Gastas $200 más/mes que hace 2 años"
 - Categoriza ~50 transacciones uncategorized
 
 **Mes 2+ (Uso continuo):**
-- Darwin recibe nuevos statements (4 PDFs/mes)
+- el usuario recibe nuevos statements (4 PDFs/mes)
 - Sube los 4 PDFs
 - Se agregan al timeline existente
 - Dashboard se actualiza automáticamente
@@ -766,11 +766,11 @@ BofA Checking ($5,000)
 - Merchant clustering: String similarity (Levenshtein distance, 80% threshold)
 - Normalization rules: Regex patterns en JSON file
 - Rule priority: Higher priority wins
-- Manual override: Darwin puede editar canonical name
+- Manual override: el usuario puede editar canonical name
 - Auto-categorization basada en normalized merchant
 
 #### **5. Accounts & Merchants (Important)**
-- List Darwin's 4 accounts
+- List el usuario's 4 accounts
 - View balance per account
 - List all known merchants
 - Add/edit merchant info (canonical name, aliases, default category)
@@ -802,7 +802,7 @@ BofA Checking ($5,000)
 ### **❌ Fuera de Scope V1**
 
 - ❌ API pública (REST endpoints para terceros)
-- ❌ Multi-user / authentication (solo Darwin usa, localhost)
+- ❌ Multi-user / authentication (solo el usuario usa, localhost)
 - ❌ Real-time bank sync (no plaid, no OAuth)
 - ❌ Mobile app nativa
 - ❌ Budgets / forecasting avanzado
@@ -841,7 +841,7 @@ finance-app-v1/
 │   └── rules.json       # Normalization rules
 ├── scripts/
 │   ├── init_db.py       # Create schema (observations + transactions tables)
-│   └── seed_data.py     # Darwin's 4 accounts + initial rules
+│   └── seed_data.py     # el usuario's 4 accounts + initial rules
 └── main.py               # Entry point
 
 ~1800 LOC total
@@ -857,7 +857,7 @@ finance-app-v1/
 ### **Data Model (SQLite)**
 
 **Tables (6 principales):**
-1. **accounts** (4 rows - Darwin's accounts)
+1. **accounts** (4 rows - el usuario's accounts)
 2. **observations** (12k+ rows - raw data from PDFs)
 3. **transactions** (12k+ rows - canonical/normalized data)
 4. **uploads** (96+ rows - tracking de PDFs subidos)
@@ -866,7 +866,7 @@ finance-app-v1/
 
 **Schema completo:**
 ```sql
--- accounts: Darwin's 4 cuentas
+-- accounts: el usuario's 4 cuentas
 CREATE TABLE accounts (
     account_id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -1079,7 +1079,7 @@ def upload_statement(pdf_file) -> dict:
 
 **Integration tests:**
 - Upload 4 different banks → all succeed
-- Upload 96 PDFs (Darwin's 2 years) → all succeed
+- Upload 96 PDFs (el usuario's 2 years) → all succeed
 
 ## Edge Cases
 1. **Duplicate upload**: Hash exists → return existing upload_id, don't re-parse
@@ -1097,7 +1097,7 @@ Cada flow debe incluir:
 # User Flow: [Nombre]
 
 ## Context
-**User**: Darwin
+**User**: el usuario
 **Goal**: [Objetivo del usuario]
 **Preconditions**: [Estado inicial]
 
@@ -1105,10 +1105,10 @@ Cada flow debe incluir:
 
 ### Part 1: [Título]
 **Narrative:**
-Darwin [acción]...
+el usuario [acción]...
 
 **Steps:**
-1. Darwin opens http://localhost:5000/upload
+1. el usuario opens http://localhost:5000/upload
 2. Clicks "Choose File"
 3. Selects `BofA_Oct2022.pdf` from ~/Downloads
 4. Clicks "Upload"
@@ -1135,15 +1135,15 @@ Darwin [acción]...
 [Continuar con más parts del flow]
 
 ## Edge Cases Encountered
-1. Darwin uploads same PDF twice
-2. Darwin uploads corrupted PDF
-3. Darwin uploads statement from unsupported bank
+1. el usuario uploads same PDF twice
+2. el usuario uploads corrupted PDF
+3. el usuario uploads statement from unsupported bank
 
 ## UI Mockups
 [Descripción de wireframes/screenshots]
 
 ## Success Criteria
-- [ ] Darwin can complete entire flow without errors
+- [ ] el usuario can complete entire flow without errors
 - [ ] All transactions appear in list
 - [ ] Search works across all uploaded statements
 - [ ] Dashboard updates with new data
@@ -1242,13 +1242,13 @@ After parsing, verify:
 
 ### **Storytelling Document (darwin-complete-story.md)**
 
-Narrativa completa de Darwin usando el app:
+Narrativa completa de el usuario usando el app:
 
 ```markdown
-# Darwin's Complete Story: Finance App V1
+# el usuario's Complete Story: Finance App V1
 
 ## Prologue: The Problem
-Darwin has been downloading bank statements for 2 years (Oct 2022 - Oct 2024).
+el usuario has been downloading bank statements for 2 years (Oct 2022 - Oct 2024).
 He has 96 PDFs sitting in ~/Downloads, never opened.
 
 He wants to:
@@ -1265,7 +1265,7 @@ Excel is too tedious. Mint.com is bloated. He wants something simple but complet
 
 **Monday, November 4, 2024 - 8:00 PM**
 
-Darwin opens terminal:
+el usuario opens terminal:
 ```bash
 cd ~/finance-app-v1
 python main.py
@@ -1283,7 +1283,7 @@ He sees:
 [Choose File]  [Upload]
 ```
 
-Darwin drags `BofA_Oct2024.pdf` from ~/Downloads.
+el usuario drags `BofA_Oct2024.pdf` from ~/Downloads.
 
 Clicks "Upload".
 
@@ -1298,7 +1298,7 @@ Clicks "Upload".
 [View Transactions]
 ```
 
-Darwin clicks "View Transactions".
+el usuario clicks "View Transactions".
 
 He sees a table:
 ```
@@ -1309,13 +1309,13 @@ Date         Account        Merchant          Amount
 ...
 ```
 
-"It works!" Darwin thinks.
+"It works!" el usuario thinks.
 
 ---
 
 ## Chapter 2: The Historical Load (Week 1, Days 2-3)
 
-Darwin realizes: "I have 2 years of statements. Let me load them all."
+el usuario realizes: "I have 2 years of statements. Let me load them all."
 
 He opens ~/Downloads, selects all BofA statements:
 - BofA_Oct2022.pdf
@@ -1333,7 +1333,7 @@ He opens ~/Downloads, selects all BofA statements:
 
 Total time: 48 seconds.
 
-Darwin refreshes transaction list.
+el usuario refreshes transaction list.
 
 Now he sees:
 ```
@@ -1355,7 +1355,7 @@ Date         Account        Merchant          Amount
 
 November 30, 2024.
 
-Darwin receives email: "Your October statement is ready".
+el usuario receives email: "Your October statement is ready".
 
 He downloads BofA_Nov2024.pdf.
 
@@ -1370,7 +1370,7 @@ Dashboard updates automatically:
 November 2024 Spending: $2,847.23 (-8% vs October)
 ```
 
-"This is so simple," Darwin thinks. "Why didn't I build this 2 years ago?"
+"This is so simple," el usuario thinks. "Why didn't I build this 2 years ago?"
 
 ---
 
@@ -1378,13 +1378,13 @@ November 2024 Spending: $2,847.23 (-8% vs October)
 
 1. **Timeline continuo works**: No distinction between loading old statements vs new ones
 2. **Auto-detection is crucial**: No dropdowns, just upload
-3. **Pipeline is invisible**: Darwin sees clean data, doesn't know about clustering/normalization
+3. **Pipeline is invisible**: el usuario sees clean data, doesn't know about clustering/normalization
 4. **Normalization saves time**: "UBER *EATS" → "Uber Eats" automatically
 5. **Transfer detection is magic**: "Wait, these $1000 transactions match!"
 6. **Two stores = power**: Can always see raw data, can re-normalize anytime
 7. **Simple is powerful**: ~1800 LOC, simple algorithms, works perfectly
 
-**Darwin is happy. V1 is complete.**
+**el usuario is happy. V1 is complete.**
 ```
 
 ---
@@ -1396,7 +1396,7 @@ November 2024 Spending: $2,847.23 (-8% vs October)
 - [ ] Cada spec incluye edge cases concretos
 - [ ] User flows son narrativos (story-driven, no solo bullets)
 - [ ] Technical specs incluyen código de ejemplo (pseudo-code OK)
-- [ ] Darwin's story es completa (intro → daily use)
+- [ ] el usuario's story es completa (intro → daily use)
 
 ### **Completeness**
 - [ ] 10 batches documentados (foundation → pipeline → dashboard)
@@ -1531,7 +1531,7 @@ Status: Processing... → Ready
 **Upload Flow (1.1):**
 - Duplicate detection via SHA256 hash
 - Error handling (corrupted PDF, unsupported format)
-- Multi-file upload (Darwin uploads 96 PDFs)
+- Multi-file upload (el usuario uploads 96 PDFs)
 
 **Extraction (1.2):**
 - Parser per bank (different layouts)
@@ -1582,7 +1582,7 @@ Status: Processing... → Ready
 
 ---
 
-### **Darwin's Real Usage Patterns**
+### **el usuario's Real Usage Patterns**
 
 **Monthly Spending:**
 - Food & Dining: $800-1000
@@ -1603,7 +1603,7 @@ Status: Processing... → Ready
 - Wise USD → Scotia MXN (monthly, $300-500)
 - Apple Card payment from BofA (monthly, $1000-2000)
 
-**Edge Cases Darwin Encounters:**
+**Edge Cases el usuario Encounters:**
 - Uploads wrong file (non-PDF) → error
 - Uploads statement twice → duplicate detected
 - PDF from unknown bank → unsupported error
@@ -1619,7 +1619,7 @@ Status: Processing... → Ready
 - [ ] Entendido: Dos stores (observations = raw, transactions = canonical)
 - [ ] Entendido: Clustering simple (string similarity, no ML, ~50 LOC)
 - [ ] Entendido: Hardcoded OK (no pre-diseñar abstracciones)
-- [ ] Entendido: Darwin tiene 4 cuentas, 2 años de historia
+- [ ] Entendido: el usuario tiene 4 cuentas, 2 años de historia
 - [ ] Entendido: 10 batches + 5 flows + technical specs (incluye pipeline) + storytelling
 - [ ] Entendido: NO copiar abstracciones de /Description/
 - [ ] Entendido: Example-first (V1 hardcoded, V2 abstraído después)
@@ -1686,7 +1686,7 @@ Ahora tienes:
 - ✅ Pipeline completo (Observe → Cluster → Normalize → Canonical)
 - ✅ Scope definido (qué incluir, qué no, clustering incluido)
 - ✅ Methodology (example-first, hardcoded OK, ~1800 LOC)
-- ✅ Darwin's context (4 cuentas, 2 años, uso real)
+- ✅ el usuario's context (4 cuentas, 2 años, uso real)
 - ✅ Deliverables (10 batches + 5 flows + pipeline specs + storytelling)
 - ✅ Success criteria (qué hace buen trabajo)
 - ✅ Anti-patterns (qué evitar)
@@ -1703,7 +1703,7 @@ Ahora tienes:
 
 ---
 
-**Document Version**: 2.1 (Updated with Complete Darwin Context)
+**Document Version**: 2.1 (Updated with Complete el usuario Context)
 **Date**: 2025-10-28
 **Author**: Claude (Session 1 - Handoff to Session 2)
 **Status**: Ready for execution
@@ -1711,4 +1711,4 @@ Ahora tienes:
 **Changes from v1.0**:
 - Added complete pipeline (Observe → Cluster → Normalize → Canonical)
 - Updated LOC to ~1800, 10 batches instead of 9
-- **v2.1**: Added complete Darwin context (money flow, account purposes, pain points, geographic context)
+- **v2.1**: Added complete el usuario context (money flow, account purposes, pain points, geographic context)

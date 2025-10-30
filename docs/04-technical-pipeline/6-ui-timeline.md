@@ -390,7 +390,7 @@ function parseDateRange(range) {
 
 ### Scenario: Mixed USD/MXN transactions
 
-Darwin tiene cuentas en USA (USD) y México (MXN). El timeline muestra ambas:
+el usuario tiene cuentas en USA (USD) y México (MXN). El timeline muestra ambas:
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -516,7 +516,7 @@ MXN: -$4,500.00 MXN spent • +$0.00 MXN income
 
 ### Transfer Between Different Currencies
 
-**Scenario**: Darwin transfiere USD → MXN (e.g., Wise)
+**Scenario**: el usuario transfiere USD → MXN (e.g., Wise)
 
 ```
 ┌──────────────────────────────────────────────────┐
